@@ -83,7 +83,7 @@ func (CF *CachedFile) ReadNewData() *tdef.Finfo {
 	if CF.LenBytes()+MEM_READ_SIZE > MEM_TOTAL_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
 		return nil
 	}
-	finfo, bytes, err := CF.dataRequestCallback(CF.readUntil, MEM_READ_SIZE)
+	finfo, bytes, err := CF.dataRequestCallback(CF.End(), MEM_READ_SIZE)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
 	}
