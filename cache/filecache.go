@@ -68,8 +68,6 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	CF.content = CF.content[length:]
 	CF.offset += length
 	go CF.ReadNewData()
-	go CF.ReadNewData()
-	go CF.ReadNewData()
 	return buffer, nil
 }
 
