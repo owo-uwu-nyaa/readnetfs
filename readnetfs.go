@@ -66,6 +66,7 @@ type DirResponse struct {
 }
 
 func netRead(file string, offset int, length int) (*tdef.Finfo, []byte, syscall.Errno) {
+	log.Trace().Msgf("doing net read at %d for len %d", offset, length)
 	conn, err := net.Dial("tcp", peerNodes[0])
 	if err != nil {
 		return nil, nil, syscall.EIO
@@ -138,6 +139,7 @@ func (n *NetNodeFH) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 	if ok {
 		buf, err := cacheEntry.Read(int(off), len(dest))
 		if err != nil {
+			cacheEntry.Kill()
 			delete(fcache, prefixlessPath)
 			return n.Read(ctx, dest, off)
 		}

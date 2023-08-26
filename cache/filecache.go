@@ -63,10 +63,12 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	CF.lock.Lock()
 	defer CF.lock.Unlock()
 	CF.readUntil += length
-	var buffer []byte = make([]byte, length)
+	var buffer = make([]byte, length)
 	copy(buffer, CF.content[offset-CF.offset:offset-CF.offset+length])
 	CF.content = CF.content[length:]
 	CF.offset += length
+	go CF.ReadNewData()
+	go CF.ReadNewData()
 	go CF.ReadNewData()
 	return buffer, nil
 }
@@ -75,12 +77,12 @@ func (CF *CachedFile) ReadNewData() *tdef.Finfo {
 	if CF.dead {
 		return nil
 	}
-	if CF.LenBytes()+MEM_READ_SIZE > MEM_TOTAL_CACHE_B || (CF.End() >= CF.fileSize && CF.LenBytes() > 0) {
-		return nil
-	}
 	log.Trace().Msg("Reading new data for the cache")
 	CF.lock.Lock()
 	defer CF.lock.Unlock()
+	if CF.LenBytes()+MEM_READ_SIZE > MEM_TOTAL_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
+		return nil
+	}
 	finfo, bytes, err := CF.dataRequestCallback(CF.readUntil, MEM_READ_SIZE)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
