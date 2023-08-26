@@ -80,7 +80,7 @@ func (CF *CachedFile) ReadNewData() *tdef.Finfo {
 	log.Trace().Msg("Reading new data for the cache")
 	CF.lock.Lock()
 	defer CF.lock.Unlock()
-	if CF.LenBytes()+MEM_READ_SIZE > MEM_TOTAL_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
+	if CF.LenBytes()+MEM_READ_SIZE > MEM_PER_FILE_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
 		return nil
 	}
 	finfo, bytes, err := CF.dataRequestCallback(CF.End(), MEM_READ_SIZE)
