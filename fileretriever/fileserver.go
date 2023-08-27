@@ -1,0 +1,143 @@
+package fileretriever
+
+import (
+	"github.com/lunixbochs/struc"
+	"github.com/rs/zerolog/log"
+	"io/fs"
+	"net"
+	"os"
+	"strings"
+)
+
+const (
+	FILE_INFO byte = iota
+	READ_CONTENT
+	READDIR_CONTENT
+)
+
+type FileRequest struct {
+	Offset     int
+	Length     int
+	PathLength int `struc:"int16,sizeof=Path"`
+	Path       string
+}
+
+type FileResponse struct {
+	Length   int `struc:"int32,sizeof=Content"`
+	FileSize int
+	Content  []byte
+}
+
+type DirResponse struct {
+	DirLength  int `struc:"int32,sizeof=Dirs"`
+	Dirs       []byte
+	FileLength int `struc:"int32,sizeof=Files"`
+	Files      []byte
+}
+
+type FileServer struct {
+	srcDir  string
+	bind    string
+	fclient *FileClient
+}
+
+func NewFileServer(srcDir string, bind string, fclient *FileClient) *FileServer {
+	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient}
+}
+
+func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
+	path := f.srcDir + "/" + request.Path
+	root := os.DirFS(path)
+	entries, err := fs.ReadDir(root, ".")
+	if err != nil {
+		return
+	}
+	files := make([]string, 0)
+	dirs := make([]string, 0)
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		} else {
+			files = append(files, e.Name())
+		}
+	}
+	dirResponse := DirResponse{
+		Dirs:  []byte(strings.Join(dirs, "\x00")),
+		Files: []byte(strings.Join(files, "\x00")),
+	}
+	err = struc.Pack(conn, &dirResponse)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to write response")
+		return
+	}
+}
+
+func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
+	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
+	buf, err := f.fclient.localRead(f.srcDir+"/"+request.Path, request.Offset, request.Length)
+	if err != nil {
+		return
+	}
+	fileResponse := &FileResponse{
+		Content: buf,
+	}
+	struc.Pack(conn, fileResponse)
+}
+
+func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
+	fInfo, err := f.fclient.localFileInfo(request.Path)
+	if err != nil {
+		log.Debug().Err(err).Msgf("Failed to read local file info for %s", request.Path)
+		return
+	}
+	struc.Pack(conn, fInfo)
+}
+
+func (f *FileServer) handleConn(conn net.Conn) {
+	defer conn.Close()
+	request := &FileRequest{}
+	messageType := make([]byte, 1)
+	n, err := conn.Read(messageType)
+	if err != nil || n != 1 {
+		log.Warn().Err(err).Msg("Failed to read message type")
+		return
+	}
+	switch messageType[0] {
+	case FILE_INFO:
+		err = struc.Unpack(conn, request)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to unpack request")
+			return
+		}
+		f.handleGetFileInfo(conn, request)
+	case READ_CONTENT:
+		err = struc.Unpack(conn, request)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to unpack request")
+			return
+		}
+		f.handleFileRequest(conn, request)
+	case READDIR_CONTENT:
+		err = struc.Unpack(conn, request)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to unpack request")
+			return
+		}
+		f.handleDirRequest(conn, request)
+	}
+}
+
+func (f *FileServer) Serve() {
+	ln, err := net.Listen("tcp", f.bind)
+	if err != nil {
+		// handle error
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Info().Err(err).Msg("Failed to accept")
+			conn.Close()
+		}
+		go f.handleConn(conn)
+	}
+}

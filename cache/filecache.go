@@ -4,13 +4,12 @@ import "C"
 import (
 	"errors"
 	"github.com/rs/zerolog/log"
-	"readnetfs/tdef"
 	"sync"
 )
 
-var MEM_PER_FILE_CACHE_B = 1024 * 1024 * 50    // 50MB
-var MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
-var MEM_READ_SIZE = 1024 * 1024 * 10           //10MB
+const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 50    // 50MB
+const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
+const MEM_READ_SIZE = 1024 * 1024 * 10           //10MB
 
 // CachedFile supports contiguous reads via cache
 type CachedFile struct {
@@ -19,15 +18,21 @@ type CachedFile struct {
 	content             []byte
 	readUntil           int
 	lock                sync.Mutex
-	dataRequestCallback func(offset, length int) (*tdef.Finfo, []byte, error)
+	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
 	dead                bool
 }
 
-func NewCachedFile(path string, initialOffset int64, dataRequestCallback func(offset int, length int) (*tdef.Finfo, []byte, error)) *CachedFile {
-	cf := &CachedFile{path: path, dataRequestCallback: dataRequestCallback, dead: false, offset: int(initialOffset), readUntil: int(initialOffset)}
-	finfo := cf.ReadNewData()
-	cf.fileSize = int(finfo.Size)
+func NewCachedFile(path string, initialOffset, fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
+	cf := &CachedFile{
+		path:                path,
+		dataRequestCallback: dataRequestCallback,
+		fileSize:            fSize,
+		dead:                false,
+		offset:              initialOffset,
+		readUntil:           initialOffset,
+	}
+	cf.ReadNewData()
 	return cf
 }
 
@@ -71,21 +76,20 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	return buffer, nil
 }
 
-func (CF *CachedFile) ReadNewData() *tdef.Finfo {
+func (CF *CachedFile) ReadNewData() {
 	if CF.dead {
-		return nil
+		return
 	}
 	log.Trace().Msg("Reading new data for the cache")
 	CF.lock.Lock()
 	defer CF.lock.Unlock()
 	if CF.LenBytes()+MEM_READ_SIZE > MEM_PER_FILE_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
-		return nil
+		return
 	}
-	finfo, bytes, err := CF.dataRequestCallback(CF.End(), MEM_READ_SIZE)
+	bytes, err := CF.dataRequestCallback(CF.End(), MEM_READ_SIZE)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
 	}
 	CF.content = append(CF.content, bytes...)
 	log.Trace().Msg("Successfully acquired new data for the cache")
-	return finfo
 }
