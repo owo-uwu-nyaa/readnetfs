@@ -1,6 +1,5 @@
 package cache
 
-import "C"
 import (
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
@@ -9,7 +8,7 @@ import (
 
 const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
 const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
-const BLOCKSIZE = 1024 * 1024 * 10               //10MB
+const BLOCKSIZE = 1024 * 1024 * 1                //10MB
 
 type CacheBlock struct {
 	data []byte
@@ -65,7 +64,7 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	newBlock.lock.Unlock()
 	peekaboo.lock.Lock()
 	defer peekaboo.lock.Unlock()
-	for i := 0; i < CF.lru.Len()/2; i++ {
+	for i := 0; i < CF.lru.Len()/10; i++ {
 		go CF.ReadNewData(lruBlock + i)
 	}
 	if len(peekaboo.data) < blockOffset {

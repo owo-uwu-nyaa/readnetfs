@@ -72,10 +72,13 @@ func (n *NetNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHan
 }
 
 func (n *NetNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
-	path := n.path + "/" + name
-	finfo, err := fclient.FileInfo(path)
+	prefixlessPath := n.path[len(fclient.SrcDir()):]
+	if prefixlessPath != "" && prefixlessPath[0] == '/' {
+		prefixlessPath = prefixlessPath[1:]
+	}
+	finfo, err := fclient.FileInfo(prefixlessPath)
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read file info for %s", path)
+		log.Debug().Err(err).Msgf("Failed to read file info for %s", prefixlessPath)
 		return nil, syscall.EIO
 	}
 	var mode fs.FileMode
@@ -86,10 +89,10 @@ func (n *NetNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (
 	}
 	stable := fusefs.StableAttr{
 		Mode: uint32(mode),
-		Ino:  fclient.ThisFsToInode(path),
+		Ino:  fclient.ThisFsToInode(n.path + "/" + name),
 	}
 	cNode := &NetNode{
-		path: path,
+		path: n.path + "/" + name,
 	}
 	child := n.NewInode(ctx, cNode, stable)
 	return child, 0
