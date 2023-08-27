@@ -11,21 +11,25 @@ import (
 	"readnetfs/cache"
 	"readnetfs/fileretriever"
 	"strings"
+	"sync"
 	"syscall"
 )
 
 type NetNode struct {
 	fusefs.Inode
 	path string
+	mu   sync.Mutex
 }
 
 var fcache = make(map[string]*cache.CachedFile)
 
-type NetNodeFH struct {
-	path string
+func (f *NetNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	return nil, 0, 0
 }
 
-func (n *NetNodeFH) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (n *NetNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	prefixlessPath := n.path[len(fclient.SrcDir()):]
 	if prefixlessPath != "" && prefixlessPath[0] == '/' {
@@ -37,7 +41,7 @@ func (n *NetNodeFH) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 		if err != nil {
 			cacheEntry.Kill()
 			delete(fcache, prefixlessPath)
-			return n.Read(ctx, dest, off)
+			return n.Read(ctx, fh, dest, off)
 		}
 		return fuse.ReadResultData(buf), 0
 	}
@@ -58,16 +62,24 @@ func (n *NetNodeFH) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 	return fuse.ReadResultData(buf), 0
 }
 
-func (n *NetNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	// disallow writes
-	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
-		return nil, 0, syscall.EROFS
+func (n *NetNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
+	return 0, 0
+}
+
+func (n *NetNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	prefixlessPath := n.path[len(fclient.SrcDir()):]
+	if prefixlessPath != "" && prefixlessPath[0] == '/' {
+		prefixlessPath = prefixlessPath[1:]
 	}
-	fh = &NetNodeFH{
-		path: n.path,
+	fInfo, err := fclient.FileInfo(prefixlessPath)
+	if err != nil {
+		return 0
 	}
-	// Return FOPEN_DIRECT_IO so content is not cached.
-	return fh, fuse.FOPEN_DIRECT_IO, 0
+	out.Size = uint64(fInfo.Size)
+	out.Mtime = uint64(fInfo.ModTime)
+	return 0
 }
 
 func (n *NetNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
