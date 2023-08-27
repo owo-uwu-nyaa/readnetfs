@@ -7,7 +7,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"io/fs"
 	"os"
 	"readnetfs/cache"
 	"readnetfs/fileretriever"
@@ -76,19 +75,8 @@ func (n *NetNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (
 	if prefixlessPath != "" && prefixlessPath[0] == '/' {
 		prefixlessPath = prefixlessPath[1:]
 	}
-	finfo, err := fclient.FileInfo(prefixlessPath)
-	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read file info for %s", prefixlessPath)
-		return nil, syscall.EIO
-	}
-	var mode fs.FileMode
-	if finfo.IsDir {
-		mode = fuse.S_IFDIR
-	} else {
-		mode = fuse.S_IFREG
-	}
 	stable := fusefs.StableAttr{
-		Mode: uint32(mode),
+		Mode: uint32(fuse.S_IFREG),
 		Ino:  fclient.ThisFsToInode(n.path + "/" + name),
 	}
 	cNode := &NetNode{
