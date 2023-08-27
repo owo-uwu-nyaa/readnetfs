@@ -17,7 +17,8 @@ type CachedFile struct {
 	offset              int
 	content             []byte
 	readUntil           int
-	lock                sync.Mutex
+	modLock             sync.Mutex
+	readLock            sync.Mutex
 	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
 	dead                bool
@@ -65,8 +66,8 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	if CF.End() < offset+length {
 		CF.ReadNewData()
 	}
-	CF.lock.Lock()
-	defer CF.lock.Unlock()
+	CF.readLock.Lock()
+	defer CF.readLock.Unlock()
 	CF.readUntil += length
 	var buffer = make([]byte, length)
 	copy(buffer, CF.content[offset-CF.offset:offset-CF.offset+length])
@@ -81,8 +82,8 @@ func (CF *CachedFile) ReadNewData() {
 		return
 	}
 	log.Trace().Msg("Reading new data for the cache")
-	CF.lock.Lock()
-	defer CF.lock.Unlock()
+	CF.modLock.Lock()
+	defer CF.modLock.Unlock()
 	if CF.LenBytes()+MEM_READ_SIZE > MEM_PER_FILE_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
 		return
 	}
@@ -90,6 +91,8 @@ func (CF *CachedFile) ReadNewData() {
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
 	}
+	CF.readLock.Lock()
+	defer CF.readLock.Unlock()
 	CF.content = append(CF.content, bytes...)
 	log.Trace().Msg("Successfully acquired new data for the cache")
 }
