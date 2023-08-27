@@ -43,6 +43,10 @@ func (f *FileClient) FileInfo(path string) (*common.Finfo, error) {
 
 func (f *FileClient) netFileInfo(path string) (*common.Finfo, error) {
 	conn, err := f.getPeerConn(path)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to get peer conn")
+		return nil, err
+	}
 	defer conn.Close()
 	write, err := conn.Write([]byte{FILE_INFO})
 	if err != nil || write != 1 {

@@ -2,38 +2,37 @@ package cache
 
 import "C"
 import (
-	"errors"
+	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
 	"sync"
 )
 
-const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 50    // 50MB
+const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
 const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
-const MEM_READ_SIZE = 1024 * 1024 * 10           //10MB
+const BLOCKSIZE = 1024 * 1024 * 10               //10MB
+
+type CacheBlock struct {
+	data []byte
+	lock sync.Mutex
+}
 
 // CachedFile supports contiguous reads via cache
 type CachedFile struct {
 	path                string
-	offset              int
-	content             []byte
-	readUntil           int
-	modLock             sync.Mutex
-	readLock            sync.Mutex
+	lru                 *lru.Cache[int, *CacheBlock]
 	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
 	dead                bool
 }
 
-func NewCachedFile(path string, initialOffset, fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
+func NewCachedFile(path string, fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
+	lru, _ := lru.New[int, *CacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
 	cf := &CachedFile{
 		path:                path,
 		dataRequestCallback: dataRequestCallback,
 		fileSize:            fSize,
-		dead:                false,
-		offset:              initialOffset,
-		readUntil:           initialOffset,
+		lru:                 lru,
 	}
-	cf.ReadNewData()
 	return cf
 }
 
@@ -41,58 +40,50 @@ func (CF *CachedFile) Kill() {
 	CF.dead = true
 }
 
-func (CF *CachedFile) LenBytes() int {
-	return len(CF.content)
-}
-
-func (CF *CachedFile) End() int {
-	end := CF.offset + len(CF.content)
-	return end
+func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) {
+	buf, err := CF.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
+	}
+	block.data = buf
 }
 
 func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	if offset > CF.fileSize {
 		return []byte{}, nil
 	}
-	if length+offset > CF.fileSize {
-		length = CF.fileSize - offset
+	lruBlock := offset / BLOCKSIZE
+	blockOffset := offset % BLOCKSIZE
+	newBlock := CacheBlock{data: []byte{}}
+	newBlock.lock.Lock()
+	peekaboo, ok, _ := CF.lru.PeekOrAdd(lruBlock, &newBlock)
+	CF.lru.Get(lruBlock)
+	if !ok {
+		peekaboo = &newBlock
+		CF.fillLruBlock(lruBlock, peekaboo)
 	}
-	if CF.readUntil != offset {
-		//non-contiguous read - the application needs to kill this
-		//this object cannot be re-used as goroutines may still try to refill the cache if it isn't marked as dead
-		log.Info().Msg("Non-contiguous read, dumping cache and retrying")
-		return nil, errors.New("non-contiguous read")
+	newBlock.lock.Unlock()
+	peekaboo.lock.Lock()
+	defer peekaboo.lock.Unlock()
+	for i := 0; i < CF.lru.Len()/2; i++ {
+		go CF.ReadNewData(lruBlock + i)
 	}
-	if CF.End() < offset+length {
-		CF.ReadNewData()
+	if len(peekaboo.data) < blockOffset {
+		return []byte{}, nil
 	}
-	CF.readLock.Lock()
-	defer CF.readLock.Unlock()
-	CF.readUntil += length
-	var buffer = make([]byte, length)
-	copy(buffer, CF.content[offset-CF.offset:offset-CF.offset+length])
-	CF.content = CF.content[length:]
-	CF.offset += length
-	go CF.ReadNewData()
-	return buffer, nil
+	if len(peekaboo.data) < blockOffset+length {
+		length = len(peekaboo.data) - blockOffset
+	}
+	return peekaboo.data[blockOffset : blockOffset+length], nil
 }
 
-func (CF *CachedFile) ReadNewData() {
-	if CF.dead {
+func (CF *CachedFile) ReadNewData(lrublock int) {
+	if CF.lru.Contains(lrublock) {
 		return
 	}
-	log.Trace().Msg("Reading new data for the cache")
-	CF.modLock.Lock()
-	defer CF.modLock.Unlock()
-	if CF.LenBytes()+MEM_READ_SIZE > MEM_PER_FILE_CACHE_B || (CF.End() >= CF.fileSize && (CF.fileSize > 0)) {
-		return
-	}
-	bytes, err := CF.dataRequestCallback(CF.End(), MEM_READ_SIZE)
-	if err != nil {
-		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
-	}
-	CF.readLock.Lock()
-	defer CF.readLock.Unlock()
-	CF.content = append(CF.content, bytes...)
-	log.Trace().Msg("Successfully acquired new data for the cache")
+	newBlock := CacheBlock{data: []byte{}}
+	newBlock.lock.Lock()
+	CF.lru.Add(lrublock, &newBlock)
+	CF.fillLruBlock(lrublock, &newBlock)
+	newBlock.lock.Unlock()
 }

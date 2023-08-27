@@ -47,7 +47,7 @@ func (n *NetNodeFH) Read(ctx context.Context, dest []byte, off int64) (fuse.Read
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", n.path)
 		return nil, syscall.EIO
 	}
-	cf := cache.NewCachedFile(prefixlessPath, int(off), int(fInfo.Size), func(offset, length int) ([]byte, error) {
+	cf := cache.NewCachedFile(prefixlessPath, int(fInfo.Size), func(offset, length int) ([]byte, error) {
 		return fclient.Read(prefixlessPath, offset, length)
 	})
 	buf, err := cf.Read(int(off), len(dest))
