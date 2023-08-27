@@ -146,7 +146,8 @@ func main() {
 	}
 	server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug: false,
+			Debug:      false,
+			AllowOther: true,
 		},
 	})
 	if err != nil {
