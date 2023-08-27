@@ -5,7 +5,6 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/lunixbochs/struc"
 	"github.com/rs/zerolog/log"
-	"math/rand"
 	"net"
 	"os"
 	"readnetfs/common"
@@ -29,8 +28,11 @@ func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 	return &FileClient{srcDir: srcDir, peerNodes: peerNodes, iMap: make(map[string]uint64)}
 }
 
+var rr int
+
 func (f *FileClient) getPeerConn(path string) (net.Conn, error) {
-	return net.Dial("tcp", f.peerNodes[rand.Intn(len(f.peerNodes))])
+	rr++
+	return net.Dial("tcp", f.peerNodes[rr%len(f.peerNodes)])
 }
 
 func (f *FileClient) FileInfo(path string) (*common.Finfo, error) {
