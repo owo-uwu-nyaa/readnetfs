@@ -49,7 +49,7 @@ type FileServer struct {
 }
 
 func NewFileServer(srcDir string, bind string, fclient *FileClient, rateLimit int) *FileServer {
-	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(8))) / float64(cache.BLOCKSIZE*8)
+	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(6))) / float64(cache.BLOCKSIZE*8)
 	log.Trace().Msgf("Setting rate limit to %d data packets per second", maxPacketsPerSecond)
 	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient, limiter: rate.NewLimiter(rate.Limit(maxPacketsPerSecond), 2)}
 }

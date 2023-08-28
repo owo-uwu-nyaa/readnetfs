@@ -120,12 +120,12 @@ func (i *PeerAddress) Set(value string) error {
 func main() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 	log.Debug().Msg(strings.Join(os.Args, ","))
-	bindAddrPort := flag.String("bind", "", "bind address and port")
-	mntDir := flag.String("mnt", "", "mnt")
-	srcDir := flag.String("src", "", "src")
-	flag.Var(&PeerNodes, "peer", "peer address and port")
-	send := flag.Bool("send", false, "send")
-	receive := flag.Bool("receive", false, "receive")
+	bindAddrPort := flag.String("bind", "", "Bind address and port in x.x.x.x:port format")
+	mntDir := flag.String("mnt", "", "Directory to mount the net filesystem on")
+	srcDir := flag.String("src", "", "Directory to serve files from")
+	flag.Var(&PeerNodes, "peer", "Peer addresses and ports in x.x.x.x:port format, has to specified for each peer like so: -peer x.x.x.x:port -peer x.x.x.x:port ...")
+	send := flag.Bool("send", false, "Serve files from the src directory")
+	receive := flag.Bool("receive", false, "Receive files and mount the net filesystem on the mnt directory")
 	rateLimit := flag.Int("rate", 1000, "rate limit in Mbit/s")
 
 	flag.Parse()
