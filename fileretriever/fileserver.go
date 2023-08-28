@@ -15,6 +15,7 @@ const (
 	READDIR_CONTENT
 )
 
+// TODO use remote path type and custom packer
 type FileRequest struct {
 	Offset     int
 	Length     int
@@ -74,7 +75,7 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
-	buf, err := f.fclient.localRead(f.srcDir+"/"+request.Path, request.Offset, request.Length)
+	buf, err := f.fclient.localRead(RemotePath(request.Path), request.Offset, request.Length)
 	if err != nil {
 		return
 	}
@@ -85,7 +86,7 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 }
 
 func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
-	fInfo, err := f.fclient.localFileInfo(request.Path)
+	fInfo, err := f.fclient.localFileInfo(RemotePath(request.Path))
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read local file info for %s", request.Path)
 		return

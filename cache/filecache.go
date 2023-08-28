@@ -17,20 +17,18 @@ type CacheBlock struct {
 
 // CachedFile supports contiguous reads via cache
 type CachedFile struct {
-	path                string
 	lru                 *lru.Cache[int, *CacheBlock]
 	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
 	dead                bool
 }
 
-func NewCachedFile(path string, fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
-	lru, _ := lru.New[int, *CacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
+func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
+	blockLru, _ := lru.New[int, *CacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
 	cf := &CachedFile{
-		path:                path,
 		dataRequestCallback: dataRequestCallback,
 		fileSize:            fSize,
-		lru:                 lru,
+		lru:                 blockLru,
 	}
 	return cf
 }
@@ -55,6 +53,7 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	blockOffset := offset % BLOCKSIZE
 	newBlock := CacheBlock{data: []byte{}}
 	newBlock.lock.Lock()
+	//TODO this is subject to races in extreme edge cases
 	peekaboo, ok, _ := CF.lru.PeekOrAdd(lruBlock, &newBlock)
 	CF.lru.Get(lruBlock)
 	if !ok {

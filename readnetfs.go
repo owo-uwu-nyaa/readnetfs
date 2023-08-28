@@ -15,65 +15,53 @@ import (
 	"syscall"
 )
 
-type NetNode struct {
+type VirtNode struct {
 	fusefs.Inode
-	path string
+	path fileretriever.RemotePath
 	mu   sync.Mutex
+	fc   *fileretriever.FileClient
 }
 
-var fcache = make(map[string]*cache.CachedFile)
-
-func (f *NetNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+func (f *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	return nil, 0, 0
 }
 
-func (n *NetNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
-	prefixlessPath := n.path[len(fclient.SrcDir()):]
-	if prefixlessPath != "" && prefixlessPath[0] == '/' {
-		prefixlessPath = prefixlessPath[1:]
-	}
-	cacheEntry, ok := fcache[prefixlessPath]
-	if ok {
+	cacheEntry := n.fc.GetCachedFile(n.path)
+	if cacheEntry != nil {
 		buf, err := cacheEntry.Read(int(off), len(dest))
 		if err != nil {
-			cacheEntry.Kill()
-			delete(fcache, prefixlessPath)
-			return n.Read(ctx, fh, dest, off)
+			log.Warn().Err(err).Msgf("Failed to read %s", n.path)
+			return nil, syscall.EIO
 		}
 		return fuse.ReadResultData(buf), 0
 	}
-	fInfo, err := fclient.FileInfo(prefixlessPath)
+	fInfo, err := n.fc.FileInfo(n.path)
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", n.path)
 		return nil, syscall.EIO
 	}
-	cf := cache.NewCachedFile(prefixlessPath, int(fInfo.Size), func(offset, length int) ([]byte, error) {
-		return fclient.Read(prefixlessPath, offset, length)
+	cf := cache.NewCachedFile(int(fInfo.Size), func(offset, length int) ([]byte, error) {
+		return n.fc.Read(n.path, offset, length)
 	})
+	cf = n.fc.PutOrGet(n.path, cf)
 	buf, err := cf.Read(int(off), len(dest))
 	if err != nil {
-		log.Warn().Err(err).Msgf("Failed to read %s", prefixlessPath)
+		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
 	}
-	fcache[prefixlessPath] = cf
 	return fuse.ReadResultData(buf), 0
 }
 
-func (n *NetNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
+func (n *VirtNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
 	return 0, 0
 }
 
-func (n *NetNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	prefixlessPath := n.path[len(fclient.SrcDir()):]
-	if prefixlessPath != "" && prefixlessPath[0] == '/' {
-		prefixlessPath = prefixlessPath[1:]
-	}
-	fInfo, err := fclient.FileInfo(prefixlessPath)
+func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	fInfo, err := n.fc.FileInfo(n.path)
 	if err != nil {
 		return 0
 	}
@@ -82,28 +70,32 @@ func (n *NetNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.A
 	return 0
 }
 
-func (n *NetNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
-	prefixlessPath := n.path[len(fclient.SrcDir()):]
-	if prefixlessPath != "" && prefixlessPath[0] == '/' {
-		prefixlessPath = prefixlessPath[1:]
+func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
+	log.Debug().Msgf("Looking up %s in %s", name, n.path)
+	childpath := n.path.Append(name)
+	fInfo, err := n.fc.FileInfo(childpath)
+	if err != nil {
+		log.Debug().Err(err).Msgf("Failed to read file info for %s", childpath)
+		return nil, syscall.EIO
 	}
 	stable := fusefs.StableAttr{
-		Mode: uint32(fuse.S_IFREG),
-		Ino:  fclient.ThisFsToInode(n.path + "/" + name),
+		Ino: n.fc.ThisFsToInode(childpath),
 	}
-	cNode := &NetNode{
-		path: n.path + "/" + name,
+	if fInfo.IsDir {
+		stable.Mode = uint32(fuse.S_IFDIR)
+	} else {
+		stable.Mode = uint32(fuse.S_IFREG)
+	}
+	cNode := &VirtNode{
+		path: childpath,
+		fc:   n.fc,
 	}
 	child := n.NewInode(ctx, cNode, stable)
 	return child, 0
 }
-func (n *NetNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno) {
+func (n *VirtNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno) {
 	log.Trace().Msgf("Reading dir %s", n.path)
-	prefixlessPath := n.path[len(fclient.SrcDir()):]
-	if prefixlessPath != "" && prefixlessPath[0] == '/' {
-		prefixlessPath = prefixlessPath[1:]
-	}
-	entries, err := fclient.ReadDir(prefixlessPath)
+	entries, err := n.fc.ReadDir(n.path)
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read dir %s", n.path)
 		return nil, syscall.EIO
@@ -111,20 +103,18 @@ func (n *NetNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno)
 	return fusefs.NewListDirStream(entries), 0
 }
 
-var PeerNodes PeerNode
+var PeerNodes PeerAddress
 
-type PeerNode []string
+type PeerAddress []string
 
-func (i *PeerNode) String() string {
+func (i *PeerAddress) String() string {
 	return "peer"
 }
 
-func (i *PeerNode) Set(value string) error {
+func (i *PeerAddress) Set(value string) error {
 	*i = append(*i, value)
 	return nil
 }
-
-var fclient *fileretriever.FileClient
 
 func main() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
@@ -137,20 +127,22 @@ func main() {
 	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
 	log.Debug().Msg("bind: " + *bindAddrPort)
 
-	fclient = fileretriever.NewFileClient(*srcDir, PeerNodes)
+	fclient := fileretriever.NewFileClient(*srcDir, PeerNodes)
 
 	fserver := fileretriever.NewFileServer(*srcDir, *bindAddrPort, fclient)
 	go fserver.Serve()
 
 	os.Mkdir(*mntDir, 0755)
-	root := &NetNode{
+	root := &VirtNode{
 		Inode: fusefs.Inode{},
-		path:  *srcDir,
+		path:  "",
+		fc:    fclient,
 	}
 	server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
 		MountOptions: fuse.MountOptions{
 			Debug:      false,
 			AllowOther: true,
+			FsName:     "chrislfs",
 		},
 	})
 	if err != nil {
