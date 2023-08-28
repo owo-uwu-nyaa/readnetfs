@@ -137,7 +137,16 @@ func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
 		time.Sleep(3 * time.Second)
 	}
 	conn, err := net.Dial("tcp", lowestPeer)
-	return conn, lowestPeer, err
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get peer conn")
+		return nil, "", err
+	}
+	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		log.Warn().Msg("Failed to set deadline")
+		return nil, "", err
+	}
+	return conn, lowestPeer, nil
 }
 
 func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
@@ -157,7 +166,12 @@ func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
 func (f *FileClient) netFileInfo(path RemotePath, peer string) (*common.Finfo, error) {
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
-		log.Debug().Err(err).Msg("Failed to get peer conn")
+		log.Warn().Err(err).Msg("Failed to get peer conn")
+		return nil, err
+	}
+	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to set deadline")
 		return nil, err
 	}
 	defer conn.Close()
@@ -220,7 +234,6 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 		log.Debug().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
-	err = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 	if err != nil {
 		return nil, err
 	}
@@ -390,11 +403,16 @@ func (f *FileClient) ThisFsToInode(path RemotePath) uint64 {
 
 func (f *FileClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, error) {
 	conn, err := net.Dial("tcp", peer)
+	defer conn.Close()
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
-	defer conn.Close()
+	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to set deadline")
+		return nil, err
+	}
 	write, err := conn.Write([]byte{READDIR_CONTENT})
 	if err != nil || write != 1 {
 		log.Warn().Err(err).Msg("Failed to write message type")

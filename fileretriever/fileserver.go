@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -96,6 +97,11 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleConn(conn net.Conn) {
 	defer conn.Close()
+	err := conn.SetDeadline(time.Now().Add(1 * time.Second))
+	if err != nil {
+		log.Warn().Msg("Failed to set deadline")
+		return
+	}
 	request := &FileRequest{}
 	messageType := make([]byte, 1)
 	n, err := conn.Read(messageType)
