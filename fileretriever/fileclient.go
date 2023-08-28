@@ -215,7 +215,7 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 		if !ok {
 			log.Debug().Msgf("Peer %s not found in peerNodes", peer)
 		} else {
-			info.Load = (*nextLoad + info.Load*5) / 5
+			info.Load = (*nextLoad + info.Load*5) / 6
 		}
 		log.Trace().Msgf("Peer %s load is now %d", peer, info.Load)
 	}()
