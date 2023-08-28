@@ -4,11 +4,12 @@ import (
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
 	"sync"
+	"time"
 )
 
 const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
 const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
-const BLOCKSIZE = 1024 * 1024 * 1                //10MB
+const BLOCKSIZE = 1024 * 1024 * 1                //1MB
 
 type CacheBlock struct {
 	data []byte
@@ -38,11 +39,16 @@ func (CF *CachedFile) Kill() {
 }
 
 func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) {
-	buf, err := CF.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
-	if err != nil {
-		log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
+	for i := 0; i < 5; i++ {
+		buf, err := CF.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
+		if err != nil {
+			log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		block.data = buf
+		return
 	}
-	block.data = buf
 }
 
 func (CF *CachedFile) Read(offset, length int) ([]byte, error) {

@@ -1,11 +1,15 @@
 package fileretriever
 
 import (
+	"context"
 	"github.com/lunixbochs/struc"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/time/rate"
 	"io/fs"
+	"math"
 	"net"
 	"os"
+	"readnetfs/cache"
 	"strings"
 	"time"
 )
@@ -40,11 +44,14 @@ type DirResponse struct {
 type FileServer struct {
 	srcDir  string
 	bind    string
+	limiter *rate.Limiter
 	fclient *FileClient
 }
 
-func NewFileServer(srcDir string, bind string, fclient *FileClient) *FileServer {
-	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient}
+func NewFileServer(srcDir string, bind string, fclient *FileClient, rateLimit int) *FileServer {
+	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(8))) / float64(cache.BLOCKSIZE*8)
+	log.Trace().Msgf("Setting rate limit to %d data packets per second", maxPacketsPerSecond)
+	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient, limiter: rate.NewLimiter(rate.Limit(maxPacketsPerSecond), 2)}
 }
 
 func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
@@ -76,6 +83,10 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
+	err := f.limiter.Wait(context.TODO())
+	if err != nil {
+		return
+	}
 	buf, err := f.fclient.localRead(RemotePath(request.Path), request.Offset, request.Length)
 	if err != nil {
 		return
@@ -143,7 +154,7 @@ func (f *FileServer) Serve() {
 		conn, err := ln.Accept()
 		if err != nil {
 			log.Info().Err(err).Msg("Failed to accept")
-			conn.Close()
+			continue
 		}
 		go f.handleConn(conn)
 	}

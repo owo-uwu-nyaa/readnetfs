@@ -18,6 +18,7 @@ import (
 )
 
 var PATH_TTL = 60 * time.Second
+var DEADLINE = 1 * time.Second
 
 type LocalPath string
 
@@ -85,20 +86,8 @@ func (f *FileClient) PutOrGet(rpath RemotePath, cf *cache.CachedFile) *cache.Cac
 	return cf
 }
 
-func (*FileClient) Lo2Re(local LocalPath) RemotePath {
-	remote := local
-	if remote != "" && remote[0] == '/' {
-		remote = remote[1:]
-	}
-	return RemotePath(remote)
-}
-
 func (f *FileClient) Re2Lo(remote RemotePath) LocalPath {
 	return LocalPath(f.srcDir + "/" + string(remote))
-}
-
-func (f *FileClient) SrcDir() string {
-	return f.srcDir
 }
 
 func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
@@ -141,7 +130,7 @@ func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, "", err
 	}
-	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Msg("Failed to set deadline")
 		return nil, "", err
@@ -169,7 +158,7 @@ func (f *FileClient) netFileInfo(path RemotePath, peer string) (*common.Finfo, e
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
-	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
 		return nil, err
@@ -403,12 +392,12 @@ func (f *FileClient) ThisFsToInode(path RemotePath) uint64 {
 
 func (f *FileClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, error) {
 	conn, err := net.Dial("tcp", peer)
-	defer conn.Close()
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
-	err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+	defer conn.Close()
+	err = conn.SetDeadline(time.Now().Add(DEADLINE * time.Second))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
 		return nil, err

@@ -63,7 +63,7 @@ func (n *VirtNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, 
 func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fInfo, err := n.fc.FileInfo(n.path)
 	if err != nil {
-		return 0
+		return syscall.EIO
 	}
 	out.Size = uint64(fInfo.Size)
 	out.Mtime = uint64(fInfo.ModTime)
@@ -93,6 +93,7 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	child := n.NewInode(ctx, cNode, stable)
 	return child, 0
 }
+
 func (n *VirtNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno) {
 	log.Trace().Msgf("Reading dir %s", n.path)
 	entries, err := n.fc.ReadDir(n.path)
@@ -123,35 +124,45 @@ func main() {
 	mntDir := flag.String("mnt", "", "mnt")
 	srcDir := flag.String("src", "", "src")
 	flag.Var(&PeerNodes, "peer", "peer address and port")
+	send := flag.Bool("send", false, "send")
+	receive := flag.Bool("receive", false, "receive")
+	rateLimit := flag.Int("rate", 1000, "rate limit in Mbit/s")
+
 	flag.Parse()
 	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
 	log.Debug().Msg("bind: " + *bindAddrPort)
 
 	fclient := fileretriever.NewFileClient(*srcDir, PeerNodes)
 
-	fserver := fileretriever.NewFileServer(*srcDir, *bindAddrPort, fclient)
-	go fserver.Serve()
-
-	os.Mkdir(*mntDir, 0755)
-	root := &VirtNode{
-		Inode: fusefs.Inode{},
-		path:  "",
-		fc:    fclient,
-	}
-	server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
-		MountOptions: fuse.MountOptions{
-			Debug:      false,
-			AllowOther: true,
-			FsName:     "chrislfs",
-		},
-	})
-	if err != nil {
-		log.Debug().Err(err).Msg("Failed to mount")
+	if !*send && !*receive {
+		log.Fatal().Msg("Must specify either send or receive or both")
 	}
 
-	log.Printf("Mounted on %s", *mntDir)
-	log.Printf("Unmount by calling 'fusermount -u %s'", *mntDir)
+	if *send {
+		fserver := fileretriever.NewFileServer(*srcDir, *bindAddrPort, fclient, *rateLimit)
+		go fserver.Serve()
+	}
 
-	// Wait until unmount before exiting
-	server.Wait()
+	if *receive {
+		os.Mkdir(*mntDir, 0755)
+		root := &VirtNode{
+			Inode: fusefs.Inode{},
+			path:  "",
+			fc:    fclient,
+		}
+		server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
+			MountOptions: fuse.MountOptions{
+				Debug:      false,
+				AllowOther: true,
+				FsName:     "chrislfs",
+			},
+		})
+		if err != nil {
+			log.Debug().Err(err).Msg("Failed to mount")
+		}
+		log.Printf("Mounted on %s", *mntDir)
+		log.Printf("Unmount by calling 'fusermount -u %s'", *mntDir)
+		// Wait until unmount before exiting
+		server.Wait()
+	}
 }
