@@ -19,14 +19,14 @@ type CacheBlock struct {
 
 // CachedFile supports contiguous reads via cache
 type CachedFile struct {
-	lru                 *lru.Cache[int, *CacheBlock]
-	dataRequestCallback func(offset, length int) ([]byte, error)
-	fileSize            int
+	lru                 *lru.Cache[int64, *CacheBlock]
+	dataRequestCallback func(offset, length int64) ([]byte, error)
+	fileSize            int64
 	mu                  sync.Mutex
 }
 
-func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
-	blockLru, _ := lru.New[int, *CacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
+func NewCachedFile(fSize int64, dataRequestCallback func(offset int64, length int64) ([]byte, error)) *CachedFile {
+	blockLru, _ := lru.New[int64, *CacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
 	cf := &CachedFile{
 		dataRequestCallback: dataRequestCallback,
 		fileSize:            fSize,
@@ -35,7 +35,7 @@ func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) (
 	return cf
 }
 
-func (cf *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
+func (cf *CachedFile) fillLruBlock(blockNumber int64, block *CacheBlock) error {
 	for i := 0; i < 5; i++ {
 		buf, err := cf.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
 		if err != nil {
@@ -50,7 +50,7 @@ func (cf *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
 	return errors.New("Failed to fill block")
 }
 
-func (cf *CachedFile) Read(offset, length int) ([]byte, error) {
+func (cf *CachedFile) Read(offset, length int64) ([]byte, error) {
 	if offset > cf.fileSize {
 		return []byte{}, nil
 	}
@@ -74,20 +74,20 @@ func (cf *CachedFile) Read(offset, length int) ([]byte, error) {
 	}
 	blck.lock.Lock()
 	defer blck.lock.Unlock()
-	for i := 0; i < 3; i++ {
+	for i := int64(0); i < 3; i++ {
 		go cf.ReadNewData(lruBlock + i)
 		time.Sleep(10 * time.Nanosecond)
 	}
-	if len(blck.data) < blockOffset {
+	if int64(len(blck.data)) < blockOffset {
 		return []byte{}, nil
 	}
-	if len(blck.data) < blockOffset+length {
-		length = len(blck.data) - blockOffset
+	if int64(len(blck.data)) < blockOffset+length {
+		length = int64(len(blck.data)) - blockOffset
 	}
 	return blck.data[blockOffset : blockOffset+length], nil
 }
 
-func (cf *CachedFile) ReadNewData(lrublock int) {
+func (cf *CachedFile) ReadNewData(lrublock int64) {
 	if cf.lru.Contains(lrublock) {
 		return
 	}

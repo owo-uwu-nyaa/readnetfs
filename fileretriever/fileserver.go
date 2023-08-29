@@ -22,22 +22,22 @@ const (
 
 // TODO use remote path type and custom packer
 type FileRequest struct {
-	Offset     int
-	Length     int
-	PathLength int `struc:"int16,sizeof=Path"`
+	Offset     int64
+	Length     int64
+	PathLength int64 `struc:"int16,sizeof=Path"`
 	Path       string
 }
 
 type FileResponse struct {
-	Length   int `struc:"int64,sizeof=Content"`
-	FileSize int
+	Length   int64 `struc:"int64,sizeof=Content"`
+	FileSize int64
 	Content  []byte
 }
 
 type DirResponse struct {
-	DirLength  int `struc:"int32,sizeof=Dirs"`
+	DirLength  int64 `struc:"int32,sizeof=Dirs"`
 	Dirs       []byte
-	FileLength int `struc:"int32,sizeof=Files"`
+	FileLength int64 `struc:"int32,sizeof=Files"`
 	Files      []byte
 }
 

@@ -41,7 +41,7 @@ func (r RemotePath) Append(name string) RemotePath {
 
 type PeerInfo struct {
 	Load            int64
-	Rate            int
+	Rate            int64
 	CurrentRequests *semaphore.Weighted
 }
 
@@ -239,7 +239,7 @@ func (f *FileClient) localFileInfo(path RemotePath) (*common.Finfo, error) {
 	}, nil
 }
 
-func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, error) {
+func (f *FileClient) netRead(path RemotePath, offset int64, length int64) ([]byte, error) {
 	nextLoad := new(int64)
 	*nextLoad = 3000
 	log.Trace().Msgf("doing net read at %d for len %d", offset, length)
@@ -308,7 +308,7 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 	return response.Content, nil
 }
 
-func (f *FileClient) localRead(remotePath RemotePath, off, length int) ([]byte, error) {
+func (f *FileClient) localRead(remotePath RemotePath, off, length int64) ([]byte, error) {
 	localPath := f.Re2Lo(remotePath)
 	file, err := os.Open(localPath.String())
 	if err != nil {
@@ -320,7 +320,7 @@ func (f *FileClient) localRead(remotePath RemotePath, off, length int) ([]byte, 
 		log.Warn().Err(err).Msgf("Failed to stat file %s", localPath)
 		return nil, err
 	}
-	if off >= int(finfo.Size()) {
+	if off >= int64(finfo.Size()) {
 		return []byte{}, nil
 	}
 	seek, err := file.Seek(int64(off), 0)
@@ -336,7 +336,7 @@ func (f *FileClient) localRead(remotePath RemotePath, off, length int) ([]byte, 
 	return buf[:read], nil
 }
 
-func (f *FileClient) Read(path RemotePath, off, length int) ([]byte, error) {
+func (f *FileClient) Read(path RemotePath, off, length int64) ([]byte, error) {
 	log.Trace().Msgf("doing read at %d for len %d", off, length)
 	buf, err := f.localRead(path, off, length)
 	if err != nil {
