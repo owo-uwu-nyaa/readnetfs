@@ -39,6 +39,14 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 			log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 			return nil, syscall.EIO
 		}
+		if len(buf) < len(dest) && len(buf) > 0 {
+			nb, err := cacheEntry.Read(int(off)+len(buf), len(dest)-len(buf))
+			if err != nil {
+				log.Warn().Err(err).Msgf("Failed to read %s", n.path)
+				return fuse.ReadResultData(buf), 0
+			}
+			buf = append(buf, nb...)
+		}
 		return fuse.ReadResultData(buf), 0
 	}
 	fInfo, err := n.fc.FileInfo(n.path)
@@ -50,19 +58,10 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 		return n.fc.Read(n.path, offset, length)
 	})
 	cf = n.fc.PutOrGet(n.path, cf)
-	buf, err := cf.Read(int(off), 4096)
+	buf, err := cf.Read(int(off), fuse.MAX_KERNEL_WRITE)
 	if err != nil {
 		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
-	}
-	if len(buf) < 4096 && len(buf) > 0 {
-		read, err := cf.Read(int(off+int64(len(buf))), 4096-len(buf))
-		if err != nil {
-			return nil, 0
-		}
-		if len(read) > 0 {
-			buf = append(buf, read...)
-		}
 	}
 	return fuse.ReadResultData(buf), 0
 }
