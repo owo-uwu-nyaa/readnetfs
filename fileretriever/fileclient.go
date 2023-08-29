@@ -56,18 +56,20 @@ type FileClient struct {
 	fclock           sync.Mutex
 	fPathRemoteCache *expirable.LRU[RemotePath, []string]
 	fplock           sync.Mutex
+	fInfoCache       *expirable.LRU[RemotePath, *common.Finfo]
 }
 
 func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 	fcache, _ := lru.New[RemotePath, *cache.CachedFile](cache.MEM_TOTAL_CACHE_B / cache.MEM_PER_FILE_CACHE_B)
 	fPathRemoteCache := expirable.NewLRU[RemotePath, []string](cache.MEM_TOTAL_CACHE_B/cache.MEM_PER_FILE_CACHE_B,
 		func(key RemotePath, value []string) {}, PATH_TTL)
+	fInfoCache := expirable.NewLRU[RemotePath, *common.Finfo](200, func(key RemotePath, value *common.Finfo) {}, PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
 		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
 	}
 	return &FileClient{srcDir: srcDir, peerNodes: pMap, iMap: make(map[RemotePath]uint64), fcache: fcache,
-		fPathRemoteCache: fPathRemoteCache}
+		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache}
 }
 
 func (f *FileClient) GetCachedFile(path RemotePath) *cache.CachedFile {
@@ -157,6 +159,18 @@ func (f *FileClient) peers() []string {
 }
 
 func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
+	if fInfo, ok := f.fInfoCache.Get(path); ok {
+		return fInfo, nil
+	}
+	fInfo, err := f.fileInfo(path)
+	if err != nil {
+		return nil, err
+	}
+	f.fInfoCache.Add(path, fInfo)
+	return fInfo, err
+}
+
+func (f *FileClient) fileInfo(path RemotePath) (*common.Finfo, error) {
 	fInfo, err := f.localFileInfo(path)
 	if err == nil {
 		return fInfo, nil
