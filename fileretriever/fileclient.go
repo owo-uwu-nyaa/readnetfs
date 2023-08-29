@@ -435,7 +435,7 @@ func (f *FileClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, 
 		return nil, err
 	}
 	defer conn.Close()
-	err = conn.SetDeadline(time.Now().Add(DEADLINE * time.Second))
+	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
 		return nil, err
