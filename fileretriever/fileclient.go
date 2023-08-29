@@ -341,10 +341,13 @@ func (f *FileClient) Read(path RemotePath, off, length int) ([]byte, error) {
 	buf, err := f.localRead(path, off, length)
 	if err != nil {
 		log.Debug().Msgf("Reading from net %s", path)
-		buf, err := f.netRead(path, off, length)
-		if err != nil {
-			log.Debug().Err(err).Msg("Failed to read from net")
-			return nil, errors.New("failed to read from net")
+		for {
+			buf, err = f.netRead(path, off, length)
+			if err != nil {
+				log.Debug().Err(err).Msg("Failed to read from net")
+				continue
+			}
+			break
 		}
 		return buf, nil
 	}
