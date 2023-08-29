@@ -29,7 +29,7 @@ type FileRequest struct {
 }
 
 type FileResponse struct {
-	Length   int `struc:"int32,sizeof=Content"`
+	Length   int `struc:"int64,sizeof=Content"`
 	FileSize int
 	Content  []byte
 }
