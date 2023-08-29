@@ -302,10 +302,6 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	if response.Length != length {
-		log.Debug().Msgf("Response length %d does not match request length %d", response.Length, length)
-		return nil, errors.New("response length does not match request length")
-	}
 	elapsed := time.Since(start)
 	log.Debug().Msgf("Read %d bytes from %s in %s", len(response.Content), peer, elapsed)
 	*nextLoad = elapsed.Milliseconds()

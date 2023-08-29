@@ -71,7 +71,7 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	newBlock.lock.Unlock()
 	peekaboo.lock.Lock()
 	defer peekaboo.lock.Unlock()
-	for i := 0; i < CF.lru.Len()/30; i++ {
+	for i := 0; i < 10; i++ {
 		go CF.ReadNewData(lruBlock + i)
 		time.Sleep(10 * time.Nanosecond)
 	}

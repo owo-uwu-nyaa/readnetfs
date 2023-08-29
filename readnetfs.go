@@ -22,11 +22,15 @@ type VirtNode struct {
 	fc   *fileretriever.FileClient
 }
 
-func (f *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+func (n *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	return nil, 0, 0
 }
 
 func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	cacheEntry := n.fc.GetCachedFile(n.path)
 	if cacheEntry != nil {
@@ -46,7 +50,7 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 		return n.fc.Read(n.path, offset, length)
 	})
 	cf = n.fc.PutOrGet(n.path, cf)
-	buf, err := cf.Read(int(off), len(dest))
+	buf, err := cf.Read(int(off), fuse.MAX_KERNEL_WRITE-10000)
 	if err != nil {
 		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
@@ -55,10 +59,14 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 }
 
 func (n *VirtNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	return 0, 0
 }
 
 func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	fInfo, err := n.fc.FileInfo(n.path)
 	if err != nil {
 		return syscall.EIO
@@ -69,6 +77,8 @@ func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.
 }
 
 func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	log.Debug().Msgf("Looking up %s in %s", name, n.path)
 	childpath := n.path.Append(name)
 	fInfo, err := n.fc.FileInfo(childpath)
@@ -93,6 +103,8 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 }
 
 func (n *VirtNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	log.Trace().Msgf("Reading dir %s", n.path)
 	entries, err := n.fc.ReadDir(n.path)
 	if err != nil {
