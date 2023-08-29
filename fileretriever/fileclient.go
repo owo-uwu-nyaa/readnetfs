@@ -57,6 +57,7 @@ type FileClient struct {
 	fPathRemoteCache *expirable.LRU[RemotePath, []string]
 	fplock           sync.Mutex
 	fInfoCache       *expirable.LRU[RemotePath, *common.Finfo]
+	fDirCache        *expirable.LRU[RemotePath, *[]fuse.DirEntry]
 }
 
 func NewFileClient(srcDir string, peerNodes []string) *FileClient {
@@ -64,12 +65,13 @@ func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 	fPathRemoteCache := expirable.NewLRU[RemotePath, []string](cache.MEM_TOTAL_CACHE_B/cache.MEM_PER_FILE_CACHE_B,
 		func(key RemotePath, value []string) {}, PATH_TTL)
 	fInfoCache := expirable.NewLRU[RemotePath, *common.Finfo](200, func(key RemotePath, value *common.Finfo) {}, PATH_TTL)
+	fDirCache := expirable.NewLRU[RemotePath, *[]fuse.DirEntry](200, func(key RemotePath, value *[]fuse.DirEntry) {}, PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
 		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
 	}
 	return &FileClient{srcDir: srcDir, peerNodes: pMap, iMap: make(map[RemotePath]uint64), fcache: fcache,
-		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache}
+		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache, fDirCache: fDirCache}
 }
 
 func (f *FileClient) GetCachedFile(path RemotePath) *cache.CachedFile {
@@ -350,6 +352,18 @@ func (f *FileClient) Read(path RemotePath, off, length int) ([]byte, error) {
 }
 
 func (f *FileClient) ReadDir(path RemotePath) ([]fuse.DirEntry, error) {
+	if fInfo, ok := f.fDirCache.Get(path); ok {
+		return *fInfo, nil
+	}
+	fDirs, err := f.readDir(path)
+	if err != nil {
+		return nil, err
+	}
+	f.fDirCache.Add(path, &fDirs)
+	return fDirs, err
+}
+
+func (f *FileClient) readDir(path RemotePath) ([]fuse.DirEntry, error) {
 	localEntries, err := f.localReadDir(path)
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read local dir %s", path)
