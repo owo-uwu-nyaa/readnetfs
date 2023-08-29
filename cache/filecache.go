@@ -22,6 +22,7 @@ type CachedFile struct {
 	lru                 *lru.Cache[int, *CacheBlock]
 	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
+	mu                  sync.Mutex
 }
 
 func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
@@ -34,9 +35,9 @@ func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) (
 	return cf
 }
 
-func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
+func (cf *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
 	for i := 0; i < 5; i++ {
-		buf, err := CF.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
+		buf, err := cf.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
 		if err != nil {
 			log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
 			continue
@@ -45,53 +46,55 @@ func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
 		return nil
 	}
 	log.Warn().Msg("Killing Block")
-	CF.lru.Remove(blockNumber)
+	cf.lru.Remove(blockNumber)
 	return errors.New("Failed to fill block")
 }
 
-func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
-	if offset > CF.fileSize {
+func (cf *CachedFile) Read(offset, length int) ([]byte, error) {
+	if offset > cf.fileSize {
 		return []byte{}, nil
 	}
 	lruBlock := offset / BLOCKSIZE
 	blockOffset := offset % BLOCKSIZE
-	newBlock := CacheBlock{data: []byte{}}
-	newBlock.lock.Lock()
-	//TODO this is subject to races in extreme edge cases
-	peekaboo, ok, _ := CF.lru.PeekOrAdd(lruBlock, &newBlock)
-	CF.lru.Get(lruBlock)
+	cf.mu.Lock()
+	blck, ok := cf.lru.Get(lruBlock)
 	if !ok {
-		peekaboo = &newBlock
-		err := CF.fillLruBlock(lruBlock, peekaboo)
+		newBlock := CacheBlock{data: []byte{}}
+		newBlock.lock.Lock()
+		cf.lru.Add(lruBlock, &newBlock)
+		cf.mu.Unlock()
+		err := cf.fillLruBlock(lruBlock, &newBlock)
+		newBlock.lock.Unlock()
 		if err != nil {
-			newBlock.lock.Unlock()
 			return nil, err
 		}
+		blck = &newBlock
+	} else {
+		cf.mu.Unlock()
 	}
-	newBlock.lock.Unlock()
-	peekaboo.lock.Lock()
-	defer peekaboo.lock.Unlock()
+	blck.lock.Lock()
+	defer blck.lock.Unlock()
 	for i := 0; i < 3; i++ {
-		go CF.ReadNewData(lruBlock + i)
+		go cf.ReadNewData(lruBlock + i)
 		time.Sleep(10 * time.Nanosecond)
 	}
-	if len(peekaboo.data) < blockOffset {
+	if len(blck.data) < blockOffset {
 		return []byte{}, nil
 	}
-	if len(peekaboo.data) < blockOffset+length {
-		length = len(peekaboo.data) - blockOffset
+	if len(blck.data) < blockOffset+length {
+		length = len(blck.data) - blockOffset
 	}
-	return peekaboo.data[blockOffset : blockOffset+length], nil
+	return blck.data[blockOffset : blockOffset+length], nil
 }
 
-func (CF *CachedFile) ReadNewData(lrublock int) {
-	if CF.lru.Contains(lrublock) {
+func (cf *CachedFile) ReadNewData(lrublock int) {
+	if cf.lru.Contains(lrublock) {
 		return
 	}
 	newBlock := CacheBlock{data: []byte{}}
 	newBlock.lock.Lock()
-	CF.lru.Add(lrublock, &newBlock)
-	err := CF.fillLruBlock(lrublock, &newBlock)
+	cf.lru.Add(lrublock, &newBlock)
+	err := cf.fillLruBlock(lrublock, &newBlock)
 	newBlock.lock.Unlock()
 	if err != nil {
 		return

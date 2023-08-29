@@ -20,7 +20,7 @@ import (
 )
 
 var PATH_TTL = 15 * time.Minute
-var DEADLINE = 10 * time.Minute
+var DEADLINE = 10 * time.Second
 var MAX_CONCURRENT_REQUESTS = 2
 
 type LocalPath string
