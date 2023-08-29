@@ -115,7 +115,7 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleConn(conn net.Conn) {
 	defer conn.Close()
-	err := conn.SetDeadline(time.Now().Add(10 * time.Second))
+	err := conn.SetDeadline(time.Now().Add(10 * time.Minute))
 	if err != nil {
 		log.Warn().Msg("Failed to set deadline")
 		return
