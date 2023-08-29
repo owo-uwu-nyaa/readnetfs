@@ -50,10 +50,19 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 		return n.fc.Read(n.path, offset, length)
 	})
 	cf = n.fc.PutOrGet(n.path, cf)
-	buf, err := cf.Read(int(off), fuse.MAX_KERNEL_WRITE-10000)
+	buf, err := cf.Read(int(off), fuse.MAX_KERNEL_WRITE)
 	if err != nil {
 		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
+	}
+	if len(buf) < fuse.MAX_KERNEL_WRITE && len(buf) > 0 {
+		read, err := cf.Read(int(off+int64(len(buf))), fuse.MAX_KERNEL_WRITE-len(buf))
+		if err != nil {
+			return nil, 0
+		}
+		if len(read) > 0 {
+			buf = append(buf, read...)
+		}
 	}
 	return fuse.ReadResultData(buf), 0
 }
