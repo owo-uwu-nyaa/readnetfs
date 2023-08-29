@@ -27,8 +27,6 @@ func (f *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHa
 }
 
 func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	cacheEntry := n.fc.GetCachedFile(n.path)
 	if cacheEntry != nil {

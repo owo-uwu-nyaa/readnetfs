@@ -83,7 +83,10 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
-	err := f.limiter.Wait(context.TODO())
+	start := time.Now()
+	err := f.limiter.Wait(context.Background())
+	stop := time.Now()
+	log.Trace().Msgf("Waited %d millis for rate limiter", stop.Sub(start).Milliseconds())
 	if err != nil {
 		return
 	}
@@ -94,7 +97,11 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 	fileResponse := &FileResponse{
 		Content: buf,
 	}
-	struc.Pack(conn, fileResponse)
+	err = struc.Pack(conn, fileResponse)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to write response")
+		return
+	}
 }
 
 func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
@@ -108,7 +115,7 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 
 func (f *FileServer) handleConn(conn net.Conn) {
 	defer conn.Close()
-	err := conn.SetDeadline(time.Now().Add(1 * time.Second))
+	err := conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if err != nil {
 		log.Warn().Msg("Failed to set deadline")
 		return

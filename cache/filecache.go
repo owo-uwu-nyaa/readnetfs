@@ -1,14 +1,16 @@
 package cache
 
 import (
+	"errors"
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
 	"sync"
+	"time"
 )
 
 const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
 const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
-const BLOCKSIZE = 1024 * 1024 * 1                //1MB
+const BLOCKSIZE = 1024 * 1024 * 1                //1MB and a few
 
 type CacheBlock struct {
 	data []byte
@@ -20,7 +22,6 @@ type CachedFile struct {
 	lru                 *lru.Cache[int, *CacheBlock]
 	dataRequestCallback func(offset, length int) ([]byte, error)
 	fileSize            int
-	dead                bool
 }
 
 func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) ([]byte, error)) *CachedFile {
@@ -33,11 +34,7 @@ func NewCachedFile(fSize int, dataRequestCallback func(offset int, length int) (
 	return cf
 }
 
-func (CF *CachedFile) Kill() {
-	CF.dead = true
-}
-
-func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) {
+func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) error {
 	for i := 0; i < 5; i++ {
 		buf, err := CF.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
 		if err != nil {
@@ -45,8 +42,11 @@ func (CF *CachedFile) fillLruBlock(blockNumber int, block *CacheBlock) {
 			continue
 		}
 		block.data = buf
-		return
+		return nil
 	}
+	log.Warn().Msg("Killing Block")
+	CF.lru.Remove(blockNumber)
+	return errors.New("Failed to fill block")
 }
 
 func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
@@ -62,13 +62,18 @@ func (CF *CachedFile) Read(offset, length int) ([]byte, error) {
 	CF.lru.Get(lruBlock)
 	if !ok {
 		peekaboo = &newBlock
-		CF.fillLruBlock(lruBlock, peekaboo)
+		err := CF.fillLruBlock(lruBlock, peekaboo)
+		if err != nil {
+			newBlock.lock.Unlock()
+			return nil, err
+		}
 	}
 	newBlock.lock.Unlock()
 	peekaboo.lock.Lock()
 	defer peekaboo.lock.Unlock()
-	for i := 0; i < CF.lru.Len()/10; i++ {
+	for i := 0; i < CF.lru.Len()/30; i++ {
 		go CF.ReadNewData(lruBlock + i)
+		time.Sleep(100 * time.Nanosecond)
 	}
 	if len(peekaboo.data) < blockOffset {
 		return []byte{}, nil
@@ -86,6 +91,9 @@ func (CF *CachedFile) ReadNewData(lrublock int) {
 	newBlock := CacheBlock{data: []byte{}}
 	newBlock.lock.Lock()
 	CF.lru.Add(lrublock, &newBlock)
-	CF.fillLruBlock(lrublock, &newBlock)
+	err := CF.fillLruBlock(lrublock, &newBlock)
 	newBlock.lock.Unlock()
+	if err != nil {
+		return
+	}
 }

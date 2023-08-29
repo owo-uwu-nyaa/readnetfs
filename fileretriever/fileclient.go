@@ -1,12 +1,14 @@
 package fileretriever
 
 import (
+	"context"
 	"errors"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/lunixbochs/struc"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/semaphore"
 	"math"
 	"net"
 	"os"
@@ -17,8 +19,9 @@ import (
 	"time"
 )
 
-var PATH_TTL = 60 * time.Second
-var DEADLINE = 1 * time.Second
+var PATH_TTL = 15 * time.Minute
+var DEADLINE = 10 * time.Second
+var MAX_CONCURRENT_REQUESTS = 2
 
 type LocalPath string
 
@@ -37,13 +40,15 @@ func (r RemotePath) Append(name string) RemotePath {
 }
 
 type PeerInfo struct {
-	Load int64
-	Rate int
+	Load            int64
+	Rate            int
+	CurrentRequests *semaphore.Weighted
 }
 
 type FileClient struct {
 	srcDir           string
 	peerNodes        map[string]*PeerInfo
+	plock            sync.Mutex
 	iCounter         uint64
 	iMap             map[RemotePath]uint64
 	iLock            sync.Mutex
@@ -59,7 +64,7 @@ func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 		func(key RemotePath, value []string) {}, PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
-		pMap[peer] = &PeerInfo{}
+		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
 	}
 	return &FileClient{srcDir: srcDir, peerNodes: pMap, iMap: make(map[RemotePath]uint64), fcache: fcache,
 		fPathRemoteCache: fPathRemoteCache}
@@ -90,19 +95,20 @@ func (f *FileClient) Re2Lo(remote RemotePath) LocalPath {
 	return LocalPath(f.srcDir + "/" + string(remote))
 }
 
-func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
+func (f *FileClient) getPeer(path RemotePath) (string, error) {
 	candidates, ok := f.fPathRemoteCache.Get(path)
 	if !ok {
 		candidates = make([]string, 0)
 		var thisFInfo *common.Finfo
-		for peer, _ := range f.peerNodes {
+		peers := f.peers()
+		for _, peer := range peers {
 			fInfo, err := f.netFileInfo(path, peer)
 			if err == nil {
 				if thisFInfo == nil {
 					thisFInfo = fInfo
 				} else {
 					if fInfo.Size != thisFInfo.Size {
-						return nil, "", errors.New("file has different sizes on different peers" + string(path))
+						return "", errors.New("file has different sizes on different peers" + string(path))
 					}
 				}
 				candidates = append(candidates, peer)
@@ -111,16 +117,18 @@ func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return nil, "", errors.New("no peer candidates for file" + string(path))
+		return "", errors.New("no peer candidates for file" + string(path))
 	}
 	//find candidate with lowest load
 	lowest := int64(math.MaxInt64)
 	lowestPeer := ""
 	for _, peer := range candidates {
+		f.plock.Lock()
 		if f.peerNodes[peer].Load < lowest {
 			lowest = f.peerNodes[peer].Load
 			lowestPeer = peer
 		}
+		f.plock.Unlock()
 	}
 	if lowest > 3000 {
 		time.Sleep(3 * time.Second)
@@ -128,14 +136,24 @@ func (f *FileClient) getPeerConn(path RemotePath) (net.Conn, string, error) {
 	conn, err := net.Dial("tcp", lowestPeer)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
-		return nil, "", err
+		return "", err
 	}
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Msg("Failed to set deadline")
-		return nil, "", err
+		return "", err
 	}
-	return conn, lowestPeer, nil
+	return lowestPeer, nil
+}
+
+func (f *FileClient) peers() []string {
+	f.plock.Lock()
+	peers := make([]string, 0)
+	for peer, _ := range f.peerNodes {
+		peers = append(peers, peer)
+	}
+	defer f.plock.Unlock()
+	return peers
 }
 
 func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
@@ -143,7 +161,7 @@ func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
 	if err == nil {
 		return fInfo, nil
 	}
-	for peer, _ := range f.peerNodes {
+	for _, peer := range f.peers() {
 		fInfo, err := f.netFileInfo(path, peer)
 		if err == nil {
 			return fInfo, nil
@@ -209,9 +227,32 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 	nextLoad := new(int64)
 	*nextLoad = 3000
 	log.Trace().Msgf("doing net read at %d for len %d", offset, length)
-	conn, peer, err := f.getPeerConn(path)
+	peer, err := f.getPeer(path)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to get peer")
+		return nil, err
+	}
+	f.plock.Lock()
+	peerInfo := f.peerNodes[peer]
+	f.plock.Unlock()
+	start := time.Now()
+	err = peerInfo.CurrentRequests.Acquire(context.Background(), 1)
+	defer peerInfo.CurrentRequests.Release(1)
+	stop := time.Now()
+	log.Debug().Msgf("Waited %d millis to dial conn", stop.Sub(start).Milliseconds())
+	conn, err := net.Dial("tcp", peer)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to get peer conn")
+		return nil, err
+	}
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to acquire semaphore")
+		return nil, err
+	}
 	defer func() {
+		f.plock.Lock()
 		info, ok := f.peerNodes[peer]
+		f.plock.Unlock()
 		if !ok {
 			log.Debug().Msgf("Peer %s not found in peerNodes", peer)
 		} else {
@@ -219,10 +260,6 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 		}
 		log.Trace().Msgf("Peer %s load is now %d", peer, info.Load)
 	}()
-	if err != nil {
-		log.Debug().Err(err).Msg("Failed to get peer conn")
-		return nil, err
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +281,7 @@ func (f *FileClient) netRead(path RemotePath, offset int, length int) ([]byte, e
 	}
 	var response FileResponse
 	//time read
-	start := time.Now()
+	start = time.Now()
 	err = struc.Unpack(conn, &response)
 	if err != nil {
 		return nil, err
@@ -332,7 +369,8 @@ func deduplicateLists(ls [][]fuse.DirEntry) []fuse.DirEntry {
 
 func (f *FileClient) netReadDirAllPeers(path RemotePath) (map[string][]fuse.DirEntry, error) {
 	netEntries := make(map[string][]fuse.DirEntry)
-	for peer, _ := range f.peerNodes {
+	peers := f.peers()
+	for _, peer := range peers {
 		netEntryList, err := f.netReadDir(path, peer)
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to read remote dir %s from %s", path, peer)
