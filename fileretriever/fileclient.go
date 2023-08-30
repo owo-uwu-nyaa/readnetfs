@@ -19,7 +19,7 @@ import (
 )
 
 var PATH_TTL = 15 * time.Minute
-var DEADLINE = 1000 * time.Second
+var DEADLINE = 10 * time.Second
 var MAX_CONCURRENT_REQUESTS = 2
 var PATH_CACHE_SIZE = 5000
 
