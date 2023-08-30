@@ -19,7 +19,7 @@ import (
 )
 
 var PATH_TTL = 15 * time.Minute
-var DEADLINE = 10 * time.Second
+var DEADLINE = 1000 * time.Second
 var MAX_CONCURRENT_REQUESTS = 2
 var PATH_CACHE_SIZE = 5000
 
@@ -220,13 +220,13 @@ func (f *FileClient) netFileInfoDir(path RemotePath, peer string) (*DirFInfo, er
 	var dirFInfo DirFInfo
 	dirFInfo.FInfos = make([]FInfo, 0)
 	for i := 0; i < int(nFinfo[0]); i++ {
-		var fInfo FInfo
+		fInfo := new(FInfo)
 		err = struc.Unpack(conn, fInfo)
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to write file info for dir %s", request.Path)
 			continue
 		}
-		dirFInfo.FInfos = append(dirFInfo.FInfos, fInfo)
+		dirFInfo.FInfos = append(dirFInfo.FInfos, *fInfo)
 	}
 	return &dirFInfo, nil
 }
@@ -474,7 +474,9 @@ func (f *FileClient) netReadDirAllPeers(path RemotePath) (map[string][]fuse.DirE
 			continue
 		}
 		for _, fInfo := range dirFinfo.FInfos {
-			f.fInfoCache.Add(path.Append(fInfo.Name), &fInfo)
+			fc := new(FInfo)
+			*fc = fInfo
+			f.fInfoCache.Add(path.Append(fInfo.Name), fc)
 			log.Trace().Msg(fInfo.Name + " added to file cache")
 		}
 	}

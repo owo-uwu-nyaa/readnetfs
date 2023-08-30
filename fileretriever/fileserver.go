@@ -150,7 +150,7 @@ func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
 		log.Debug().Err(err).Msgf("Failed to write num of file infos for dir %s", request.Path)
 	}
 	for _, fInfo := range fInfos.FInfos {
-		err = struc.Pack(conn, fInfo)
+		err = struc.Pack(conn, &fInfo)
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to write file info for dir %s", request.Path)
 		}
