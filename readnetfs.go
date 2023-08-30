@@ -34,7 +34,7 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	cacheEntry := n.fc.GetCachedFile(n.path)
 	if cacheEntry != nil {
-		buf, err := cacheEntry.Read(int64(off), int64(len(dest)))
+		buf, err := cacheEntry.Read(off, int64(len(dest)))
 		if err != nil {
 			log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 			return nil, syscall.EIO

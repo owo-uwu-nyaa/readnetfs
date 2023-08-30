@@ -18,6 +18,7 @@ const (
 	FILE_INFO byte = iota
 	READ_CONTENT
 	READDIR_CONTENT
+	READ_DIR_FINFO
 )
 
 // TODO use remote path type and custom packer
@@ -110,7 +111,50 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 		log.Debug().Err(err).Msgf("Failed to read local file info for %s", request.Path)
 		return
 	}
-	struc.Pack(conn, fInfo)
+	err = struc.Pack(conn, fInfo)
+	if err != nil {
+		log.Debug().Err(err).Msgf("Failed to write file info for %s", request.Path)
+		return
+	}
+}
+
+func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
+	path := f.fclient.Re2Lo(RemotePath(request.Path))
+	root := os.DirFS(path.String())
+	entries, err := fs.ReadDir(root, ".")
+	if err != nil {
+		log.Debug().Err(err).Msgf("Failed to read dir for %s", request.Path)
+		return
+	}
+	fInfos := DirFInfo{FInfos: make([]FInfo, 0)}
+	for _, e := range entries {
+		fInfo, err := e.Info()
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to read file info for %s", e.Name())
+			continue
+		}
+		fInfos.FInfos = append(fInfos.FInfos, FInfo{
+			Name:    fInfo.Name(),
+			Size:    fInfo.Size(),
+			IsDir:   fInfo.IsDir(),
+			ModTime: fInfo.ModTime().Unix(),
+		})
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to write file info for %s", e.Name())
+			return
+		}
+	}
+	//TODO use custom packer
+	write, err := conn.Write([]byte{byte(len(fInfos.FInfos))})
+	if err != nil || write != 1 {
+		log.Debug().Err(err).Msgf("Failed to write num of file infos for dir %s", request.Path)
+	}
+	for _, fInfo := range fInfos.FInfos {
+		err = struc.Pack(conn, fInfo)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to write file info for dir %s", request.Path)
+		}
+	}
 }
 
 func (f *FileServer) handleConn(conn net.Conn) {
@@ -127,6 +171,7 @@ func (f *FileServer) handleConn(conn net.Conn) {
 		log.Warn().Err(err).Msg("Failed to read message type")
 		return
 	}
+	log.Debug().Msgf("Got message type %d", messageType[0])
 	switch messageType[0] {
 	case FILE_INFO:
 		err = struc.Unpack(conn, request)
@@ -149,6 +194,12 @@ func (f *FileServer) handleConn(conn net.Conn) {
 			return
 		}
 		f.handleDirRequest(conn, request)
+	case READ_DIR_FINFO:
+		err = struc.Unpack(conn, request)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to unpack request")
+		}
+		f.handleDirFInfo(conn, request)
 	}
 }
 

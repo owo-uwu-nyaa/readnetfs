@@ -13,7 +13,6 @@ import (
 	"net"
 	"os"
 	"readnetfs/cache"
-	"readnetfs/common"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +21,20 @@ import (
 var PATH_TTL = 15 * time.Minute
 var DEADLINE = 10 * time.Second
 var MAX_CONCURRENT_REQUESTS = 2
+var PATH_CACHE_SIZE = 5000
+
+type FInfo struct {
+	NameLength int64 `struc:"int16,sizeof=Name"`
+	Name       string
+	Size       int64
+	IsDir      bool
+	ModTime    int64
+}
+
+type DirFInfo struct {
+	FInfoLength int64 `struc:"int16,sizeof=FInfos"`
+	FInfos      []FInfo
+}
 
 type LocalPath string
 
@@ -56,7 +69,7 @@ type FileClient struct {
 	fclock           sync.Mutex
 	fPathRemoteCache *expirable.LRU[RemotePath, []string]
 	fplock           sync.Mutex
-	fInfoCache       *expirable.LRU[RemotePath, *common.Finfo]
+	fInfoCache       *expirable.LRU[RemotePath, *FInfo]
 	fDirCache        *expirable.LRU[RemotePath, *[]fuse.DirEntry]
 }
 
@@ -64,8 +77,8 @@ func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 	fcache, _ := lru.New[RemotePath, *cache.CachedFile](cache.MEM_TOTAL_CACHE_B / cache.MEM_PER_FILE_CACHE_B)
 	fPathRemoteCache := expirable.NewLRU[RemotePath, []string](cache.MEM_TOTAL_CACHE_B/cache.MEM_PER_FILE_CACHE_B,
 		func(key RemotePath, value []string) {}, PATH_TTL)
-	fInfoCache := expirable.NewLRU[RemotePath, *common.Finfo](200, func(key RemotePath, value *common.Finfo) {}, PATH_TTL)
-	fDirCache := expirable.NewLRU[RemotePath, *[]fuse.DirEntry](200, func(key RemotePath, value *[]fuse.DirEntry) {}, PATH_TTL)
+	fInfoCache := expirable.NewLRU[RemotePath, *FInfo](PATH_CACHE_SIZE, func(key RemotePath, value *FInfo) {}, PATH_TTL)
+	fDirCache := expirable.NewLRU[RemotePath, *[]fuse.DirEntry](PATH_CACHE_SIZE, func(key RemotePath, value *[]fuse.DirEntry) {}, PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
 		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
@@ -103,7 +116,7 @@ func (f *FileClient) getPeer(path RemotePath) (string, error) {
 	candidates, ok := f.fPathRemoteCache.Get(path)
 	if !ok {
 		candidates = make([]string, 0)
-		var thisFInfo *common.Finfo
+		var thisFInfo *FInfo
 		peers := f.peers()
 		for _, peer := range peers {
 			fInfo, err := f.netFileInfo(path, peer)
@@ -160,7 +173,7 @@ func (f *FileClient) peers() []string {
 	return peers
 }
 
-func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
+func (f *FileClient) FileInfo(path RemotePath) (*FInfo, error) {
 	if fInfo, ok := f.fInfoCache.Get(path); ok {
 		return fInfo, nil
 	}
@@ -172,7 +185,53 @@ func (f *FileClient) FileInfo(path RemotePath) (*common.Finfo, error) {
 	return fInfo, err
 }
 
-func (f *FileClient) fileInfo(path RemotePath) (*common.Finfo, error) {
+func (f *FileClient) netFileInfoDir(path RemotePath, peer string) (*DirFInfo, error) {
+	conn, err := net.Dial("tcp", peer)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get peer conn")
+		return nil, err
+	}
+	err = conn.SetDeadline(time.Now().Add(DEADLINE))
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to set deadline")
+		return nil, err
+	}
+	defer conn.Close()
+	write, err := conn.Write([]byte{READ_DIR_FINFO})
+	if err != nil || write != 1 {
+		log.Debug().Err(err).Msg("Failed to write message type")
+		return nil, err
+	}
+	request := &FileRequest{
+		Offset: 0,
+		Length: 0,
+		Path:   string(path),
+	}
+	err = struc.Pack(conn, request)
+	if err != nil {
+		log.Debug().Err(err).Msg("Failed to pack request")
+		return nil, err
+	}
+	nFinfo := make([]byte, 1)
+	read, err := conn.Read(nFinfo)
+	if err != nil || read != 1 {
+		log.Debug().Err(err).Msgf("Failed to read num of file infos for dir %s", request.Path)
+	}
+	var dirFInfo DirFInfo
+	dirFInfo.FInfos = make([]FInfo, 0)
+	for i := 0; i < int(nFinfo[0]); i++ {
+		var fInfo FInfo
+		err = struc.Unpack(conn, fInfo)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to write file info for dir %s", request.Path)
+			continue
+		}
+		dirFInfo.FInfos = append(dirFInfo.FInfos, fInfo)
+	}
+	return &dirFInfo, nil
+}
+
+func (f *FileClient) fileInfo(path RemotePath) (*FInfo, error) {
 	fInfo, err := f.localFileInfo(path)
 	if err == nil {
 		return fInfo, nil
@@ -186,7 +245,7 @@ func (f *FileClient) fileInfo(path RemotePath) (*common.Finfo, error) {
 	return nil, errors.New("Failed to find finfo" + string(path) + "on any peer")
 }
 
-func (f *FileClient) netFileInfo(path RemotePath, peer string) (*common.Finfo, error) {
+func (f *FileClient) netFileInfo(path RemotePath, peer string) (*FInfo, error) {
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
@@ -213,7 +272,7 @@ func (f *FileClient) netFileInfo(path RemotePath, peer string) (*common.Finfo, e
 		log.Debug().Err(err).Msg("Failed to pack request")
 		return nil, err
 	}
-	var fInfo common.Finfo
+	var fInfo FInfo
 	err = struc.Unpack(conn, &fInfo)
 	if err != nil {
 		return nil, err
@@ -221,7 +280,7 @@ func (f *FileClient) netFileInfo(path RemotePath, peer string) (*common.Finfo, e
 	return &fInfo, nil
 }
 
-func (f *FileClient) localFileInfo(path RemotePath) (*common.Finfo, error) {
+func (f *FileClient) localFileInfo(path RemotePath) (*FInfo, error) {
 	file, err := os.Open(f.Re2Lo(path).String())
 	if err != nil {
 		return nil, err
@@ -231,7 +290,7 @@ func (f *FileClient) localFileInfo(path RemotePath) (*common.Finfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &common.Finfo{
+	return &FInfo{
 		Name:    fInfo.Name(),
 		Size:    fInfo.Size(),
 		IsDir:   fInfo.IsDir(),
@@ -380,11 +439,11 @@ func (f *FileClient) readDir(path RemotePath) ([]fuse.DirEntry, error) {
 	for _, v := range netEntries {
 		netList = append(netList, v)
 	}
-	entries := deduplicateLists(append(netList, localEntries))
+	entries := deduplicate(append(netList, localEntries))
 	return entries, nil
 }
 
-func deduplicateLists(ls [][]fuse.DirEntry) []fuse.DirEntry {
+func deduplicate(ls [][]fuse.DirEntry) []fuse.DirEntry {
 	m := make(map[string]fuse.DirEntry)
 	for _, l := range ls {
 		for _, e := range l {
@@ -408,6 +467,16 @@ func (f *FileClient) netReadDirAllPeers(path RemotePath) (map[string][]fuse.DirE
 			continue
 		}
 		netEntries[peer] = netEntryList
+		//try to cache finfo
+		dirFinfo, err := f.netFileInfoDir(path, peer)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to acquire associated file infos of path %s from %s", path, peer)
+			continue
+		}
+		for _, fInfo := range dirFinfo.FInfos {
+			f.fInfoCache.Add(path.Append(fInfo.Name), &fInfo)
+			log.Trace().Msg(fInfo.Name + " added to file cache")
+		}
 	}
 	return netEntries, nil
 }
