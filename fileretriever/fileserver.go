@@ -2,6 +2,7 @@ package fileretriever
 
 import (
 	"context"
+	"fmt"
 	"github.com/lunixbochs/struc"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/time/rate"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"readnetfs/cache"
+	"readnetfs/common"
 	"strings"
 	"time"
 )
@@ -56,6 +58,7 @@ func NewFileServer(srcDir string, bind string, fclient *FileClient, rateLimit in
 }
 
 func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
+	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.readdir_content:1|c\n")
 	path := f.srcDir + "/" + request.Path
 	root := os.DirFS(path)
 	entries, err := fs.ReadDir(root, ".")
@@ -83,6 +86,7 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
 }
 
 func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
+	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_content:1|c\n")
 	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
 	start := time.Now()
 	err := f.limiter.Wait(context.Background())
@@ -106,6 +110,7 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 }
 
 func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
+	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.file_info:1|c\n")
 	fInfo, err := f.fclient.localFileInfo(RemotePath(request.Path))
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read local file info for %s", request.Path)
@@ -119,6 +124,7 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 }
 
 func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
+	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_dir_finfo:1|c\n")
 	path := f.fclient.Re2Lo(RemotePath(request.Path))
 	root := os.DirFS(path.String())
 	entries, err := fs.ReadDir(root, ".")
@@ -158,6 +164,7 @@ func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
 }
 
 func (f *FileServer) handleConn(conn net.Conn) {
+	conn = common.WrapStatsdConn(conn, f.fclient.statsdSocket)
 	defer conn.Close()
 	err := conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if err != nil {

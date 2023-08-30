@@ -3,6 +3,7 @@ package fileretriever
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/hashicorp/golang-lru/v2/expirable"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"os"
 	"readnetfs/cache"
+	"readnetfs/common"
 	"strings"
 	"sync"
 	"time"
@@ -71,9 +73,10 @@ type FileClient struct {
 	fplock           sync.Mutex
 	fInfoCache       *expirable.LRU[RemotePath, *FInfo]
 	fDirCache        *expirable.LRU[RemotePath, *[]fuse.DirEntry]
+	statsdSocket     net.Conn
 }
 
-func NewFileClient(srcDir string, peerNodes []string) *FileClient {
+func NewFileClient(srcDir string, peerNodes []string, statsdAddrPort string) *FileClient {
 	fcache, _ := lru.New[RemotePath, *cache.CachedFile](cache.MEM_TOTAL_CACHE_B / cache.MEM_PER_FILE_CACHE_B)
 	fPathRemoteCache := expirable.NewLRU[RemotePath, []string](cache.MEM_TOTAL_CACHE_B/cache.MEM_PER_FILE_CACHE_B,
 		func(key RemotePath, value []string) {}, PATH_TTL)
@@ -83,8 +86,22 @@ func NewFileClient(srcDir string, peerNodes []string) *FileClient {
 	for _, peer := range peerNodes {
 		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
 	}
+
+	statsdSocket := func() net.Conn {
+		if statsdAddrPort != "" {
+			socket, err := net.Dial("udp", statsdAddrPort)
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to establish statsd connection")
+				return common.DummyConn{}
+			}
+			return socket
+		} else {
+			return common.DummyConn{}
+		}
+	}()
+
 	return &FileClient{srcDir: srcDir, peerNodes: pMap, iMap: make(map[RemotePath]uint64), fcache: fcache,
-		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache, fDirCache: fDirCache}
+		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache, fDirCache: fDirCache, statsdSocket: statsdSocket}
 }
 
 func (f *FileClient) GetCachedFile(path RemotePath) *cache.CachedFile {
@@ -191,6 +208,7 @@ func (f *FileClient) netFileInfoDir(path RemotePath, peer string) (*DirFInfo, er
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
+	conn = common.WrapStatsdConn(conn, f.statsdSocket)
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
@@ -207,6 +225,7 @@ func (f *FileClient) netFileInfoDir(path RemotePath, peer string) (*DirFInfo, er
 		Length: 0,
 		Path:   string(path),
 	}
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.read_dir_finfo:1|c\n")
 	err = struc.Pack(conn, request)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to pack request")
@@ -251,6 +270,7 @@ func (f *FileClient) netFileInfo(path RemotePath, peer string) (*FInfo, error) {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
+	conn = common.WrapStatsdConn(conn, f.statsdSocket)
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
@@ -267,6 +287,7 @@ func (f *FileClient) netFileInfo(path RemotePath, peer string) (*FInfo, error) {
 		Length: 0,
 		Path:   string(path),
 	}
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.file_info:1|c\n")
 	err = struc.Pack(conn, request)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to pack request")
@@ -320,6 +341,7 @@ func (f *FileClient) netRead(path RemotePath, offset int64, length int64) ([]byt
 		log.Debug().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
+	conn = common.WrapStatsdConn(conn, f.statsdSocket)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to acquire semaphore")
 		return nil, err
@@ -349,6 +371,7 @@ func (f *FileClient) netRead(path RemotePath, offset int64, length int64) ([]byt
 		Length: length,
 		Path:   string(path),
 	}
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.read_content:1|c\n")
 	err = struc.Pack(conn, request)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to pack request")
@@ -536,6 +559,7 @@ func (f *FileClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, 
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
+	conn = common.WrapStatsdConn(conn, f.statsdSocket)
 	defer conn.Close()
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
@@ -552,6 +576,7 @@ func (f *FileClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, 
 		Length: 0,
 		Path:   string(path),
 	}
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.readdir_content:1|c\n")
 	err = struc.Pack(conn, request)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to write request")

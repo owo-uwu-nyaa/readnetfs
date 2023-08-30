@@ -146,12 +146,13 @@ func main() {
 	send := flag.Bool("send", false, "Serve files from the src directory")
 	receive := flag.Bool("receive", false, "Receive files and mount the net filesystem on the mnt directory")
 	rateLimit := flag.Int("rate", 1000, "rate limit in Mbit/s")
+	statsdAddrPort := flag.String("statsd", "", "Statsd server address and port in x.x.x.x:port format")
 
 	flag.Parse()
 	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
 	log.Debug().Msg("bind: " + *bindAddrPort)
 
-	fclient := fileretriever.NewFileClient(*srcDir, PeerNodes)
+	fclient := fileretriever.NewFileClient(*srcDir, PeerNodes, *statsdAddrPort)
 
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")

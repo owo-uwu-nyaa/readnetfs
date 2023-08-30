@@ -15,4 +15,6 @@ Usage of ./readnetfs:
         Serve files from the src directory
   -src string
         Directory to serve files from
+  -statsd string
+        Statsd server address and port in x.x.x.x:port format
 ```
