@@ -191,11 +191,11 @@ func (f *FileClient) peers() []string {
 }
 
 func (f *FileClient) FileInfo(path RemotePath) (*FInfo, error) {
-	if fInfo, ok := f.fInfoCache.Get(path); ok {
+	if fInfo, ok := f.fInfoCache.Get(path); ok && fInfo != nil {
 		return fInfo, nil
 	}
 	fInfo, err := f.fileInfo(path)
-	if err != nil {
+	if err != nil && fInfo != nil {
 		return nil, err
 	}
 	f.fInfoCache.Add(path, fInfo)

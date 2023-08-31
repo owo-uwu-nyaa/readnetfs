@@ -93,8 +93,7 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	log.Debug().Msgf("Looking up %s in %s", name, n.path)
 	childpath := n.path.Append(name)
 	fInfo, err := n.fc.FileInfo(childpath)
-	//TODO proper fix of nil finfo
-	if err != nil || fInfo == nil {
+	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", childpath)
 		return nil, syscall.EIO
 	}
