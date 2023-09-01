@@ -16,15 +16,18 @@ import (
 	"time"
 )
 
+type MessageType byte
+
 const (
-	FILE_INFO byte = iota
+	FILE_INFO MessageType = iota
 	READ_CONTENT
 	READDIR_CONTENT
 	READ_DIR_FINFO
 )
 
 // TODO use remote path type and custom packer
-type FileRequest struct {
+type FsRequest struct {
+	Type       byte
 	Offset     int64
 	Length     int64
 	PathLength int64 `struc:"int16,sizeof=Path"`
@@ -57,7 +60,7 @@ func NewFileServer(srcDir string, bind string, fclient *FileClient, rateLimit in
 	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient, limiter: rate.NewLimiter(rate.Limit(maxPacketsPerSecond), 2)}
 }
 
-func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
+func (f *FileServer) handleDirRequest(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.readdir_content:1|c\n")
 	path := f.srcDir + "/" + request.Path
 	root := os.DirFS(path)
@@ -85,7 +88,7 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FileRequest) {
 	}
 }
 
-func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
+func (f *FileServer) handleFileRequest(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_content:1|c\n")
 	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
 	start := time.Now()
@@ -109,7 +112,7 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FileRequest) {
 	}
 }
 
-func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
+func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.file_info:1|c\n")
 	fInfo, err := f.fclient.localFileInfo(RemotePath(request.Path))
 	if err != nil {
@@ -123,7 +126,7 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FileRequest) {
 	}
 }
 
-func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
+func (f *FileServer) handleDirFInfo(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_dir_finfo:1|c\n")
 	path := f.fclient.Re2Lo(RemotePath(request.Path))
 	root := os.DirFS(path.String())
@@ -132,14 +135,14 @@ func (f *FileServer) handleDirFInfo(conn net.Conn, request *FileRequest) {
 		log.Debug().Err(err).Msgf("Failed to read dir for %s", request.Path)
 		return
 	}
-	fInfos := DirFInfo{FInfos: make([]FInfo, 0)}
+	fInfos := DirFInfo{FInfos: make([]netFileInfo, 0)}
 	for _, e := range entries {
 		fInfo, err := e.Info()
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to read file info for %s", e.Name())
 			continue
 		}
-		fInfos.FInfos = append(fInfos.FInfos, FInfo{
+		fInfos.FInfos = append(fInfos.FInfos, netFileInfo{
 			Name:    fInfo.Name(),
 			Size:    fInfo.Size(),
 			IsDir:   fInfo.IsDir(),
@@ -171,7 +174,7 @@ func (f *FileServer) handleConn(conn net.Conn) {
 		log.Warn().Msg("Failed to set deadline")
 		return
 	}
-	request := &FileRequest{}
+	request := &FsRequest{}
 	messageType := make([]byte, 1)
 	n, err := conn.Read(messageType)
 	if err != nil || n != 1 {
@@ -179,7 +182,7 @@ func (f *FileServer) handleConn(conn net.Conn) {
 		return
 	}
 	log.Debug().Msgf("Got message type %d", messageType[0])
-	switch messageType[0] {
+	switch MessageType(messageType[0]) {
 	case FILE_INFO:
 		err = struc.Unpack(conn, request)
 		if err != nil {

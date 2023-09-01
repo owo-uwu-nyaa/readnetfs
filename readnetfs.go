@@ -36,18 +36,10 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	cacheEntry := n.fc.GetCachedFile(n.path)
 	if cacheEntry != nil {
-		buf, err := cacheEntry.Read(off, int64(len(dest)))
+		buf, err := cacheEntry.Read(off, dest)
 		if err != nil {
 			log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 			return nil, syscall.EIO
-		}
-		if len(buf) < len(dest) && len(buf) > 0 {
-			nb, err := cacheEntry.Read((off)+int64(len(buf)), int64(len(dest)-len(buf)))
-			if err != nil {
-				log.Warn().Err(err).Msgf("Failed to read %s", n.path)
-				return fuse.ReadResultData(buf), 0
-			}
-			buf = append(buf, nb...)
 		}
 		return fuse.ReadResultData(buf), 0
 	}
@@ -56,16 +48,15 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", n.path)
 		return nil, syscall.EIO
 	}
-	cf := cache.NewCachedFile(int64(fInfo.Size), func(offset, length int64) ([]byte, error) {
+	cf := cache.NewCachedFile(fInfo.Size, func(offset, length int64) ([]byte, error) {
 		return n.fc.Read(n.path, offset, length)
 	})
 	cf = n.fc.PutOrGet(n.path, cf)
-	buf, err := cf.Read(int64(off), fuse.MAX_KERNEL_WRITE)
+	buf, err := cf.Read(off, dest)
 	if err != nil {
 		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
 	}
-
 	return fuse.ReadResultData(buf), 0
 }
 
@@ -149,44 +140,46 @@ func main() {
 	send := flag.Bool("send", false, "Serve files from the src directory")
 	receive := flag.Bool("receive", false, "Receive files and mount the net filesystem on the mnt directory")
 	rateLimit := flag.Int("rate", 1000, "rate limit in Mbit/s")
+	allowOther := flag.Bool("allow-other", true, "allow other users to access the mount")
 	statsdAddrPort := flag.String("statsd", "", "Statsd server address and port in x.x.x.x:port format")
-
 	flag.Parse()
+
 	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
 	log.Debug().Msg("bind: " + *bindAddrPort)
-
-	fclient := fileretriever.NewFileClient(*srcDir, PeerNodes, *statsdAddrPort)
 
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
-
+	fclient := fileretriever.NewFileClient(fileretriever.NewLocalclient(*srcDir), PeerNodes, *statsdAddrPort)
 	if *send {
 		fserver := fileretriever.NewFileServer(*srcDir, *bindAddrPort, fclient, *rateLimit)
 		go fserver.Serve()
 	}
-
 	if *receive {
-		os.Mkdir(*mntDir, 0755)
-		root := &VirtNode{
-			Inode: fusefs.Inode{},
-			sem:   semaphore.NewWeighted(MAX_CONCURRENCY),
-			path:  "",
-			fc:    fclient,
-		}
-		server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
-			MountOptions: fuse.MountOptions{
-				Debug:      false,
-				AllowOther: true,
-				FsName:     "chrislfs",
-			},
-		})
-		if err != nil {
-			log.Debug().Err(err).Msg("Failed to mount")
-		}
-		log.Printf("Mounted on %s", *mntDir)
-		log.Printf("Unmount by calling 'fusermount -u %s'", *mntDir)
-		// Wait until unmount before exiting
-		server.Wait()
+		go func() {
+			os.Mkdir(*mntDir, 0755)
+			root := &VirtNode{
+				Inode: fusefs.Inode{},
+				sem:   semaphore.NewWeighted(MAX_CONCURRENCY),
+				path:  "",
+				fc:    fclient,
+			}
+			server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
+				MountOptions: fuse.MountOptions{
+					Debug:      false,
+					AllowOther: *allowOther,
+					FsName:     "chrislfs",
+				},
+			})
+			if err != nil {
+				log.Debug().Err(err).Msg("Failed to mount")
+			}
+			log.Printf("Mounted on %s", *mntDir)
+			log.Printf("Unmount by calling 'fusermount -u %s'", *mntDir)
+			// Wait until unmount before exiting
+			server.Wait()
+		}()
 	}
+	//block forever
+	select {}
 }

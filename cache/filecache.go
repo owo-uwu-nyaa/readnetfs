@@ -5,7 +5,6 @@ import (
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
 	"sync"
-	"time"
 )
 
 const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
@@ -17,7 +16,7 @@ type CacheBlock struct {
 	lock sync.Mutex
 }
 
-// CachedFile supports contiguous reads via cache
+// CachedFile is optimal for contiguous reads
 type CachedFile struct {
 	lru                 *lru.Cache[int64, *CacheBlock]
 	dataRequestCallback func(offset, length int64) ([]byte, error)
@@ -50,9 +49,13 @@ func (cf *CachedFile) fillLruBlock(blockNumber int64, block *CacheBlock) error {
 	return errors.New("Failed to fill block")
 }
 
-func (cf *CachedFile) Read(offset, length int64) ([]byte, error) {
+func (cf *CachedFile) Read(offset int64, dest []byte) ([]byte, error) {
+	return cf.read(offset, dest)
+}
+
+func (cf *CachedFile) read(offset int64, dest []byte) ([]byte, error) {
 	if offset > cf.fileSize {
-		return []byte{}, nil
+		return dest[:0], nil
 	}
 	lruBlock := offset / BLOCKSIZE
 	blockOffset := offset % BLOCKSIZE
@@ -66,7 +69,7 @@ func (cf *CachedFile) Read(offset, length int64) ([]byte, error) {
 		err := cf.fillLruBlock(lruBlock, &newBlock)
 		newBlock.lock.Unlock()
 		if err != nil {
-			return nil, err
+			return dest[:0], err
 		}
 		blck = &newBlock
 	} else {
@@ -76,15 +79,8 @@ func (cf *CachedFile) Read(offset, length int64) ([]byte, error) {
 	defer blck.lock.Unlock()
 	for i := int64(0); i < 3; i++ {
 		go cf.ReadNewData(lruBlock + i)
-		time.Sleep(10 * time.Nanosecond)
 	}
-	if int64(len(blck.data)) < blockOffset {
-		return []byte{}, nil
-	}
-	if int64(len(blck.data)) < blockOffset+length {
-		length = int64(len(blck.data)) - blockOffset
-	}
-	return blck.data[blockOffset : blockOffset+length], nil
+	return blck.data[blockOffset:], nil
 }
 
 func (cf *CachedFile) ReadNewData(lrublock int64) {
