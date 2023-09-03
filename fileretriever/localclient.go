@@ -46,10 +46,10 @@ func (l *localClient) read(remotePath RemotePath, off int64, dest []byte) ([]byt
 
 func (l *localClient) readDir(path RemotePath) ([]os.FileInfo, error) {
 	localPath := l.re2lo(path)
-	log.Trace().Msgf("doing read dir at %s", path)
+	log.Trace().Msgf("doing Read dir at %s", path)
 	dir, err := os.ReadDir(localPath.String())
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read dir %s", path)
+		log.Debug().Err(err).Msgf("Failed to Read dir %s", path)
 		return nil, err
 	}
 	r := make([]os.FileInfo, len(dir))

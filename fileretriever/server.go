@@ -90,7 +90,7 @@ func (f *FileServer) handleDirRequest(conn net.Conn, request *FsRequest) {
 
 func (f *FileServer) handleFileRequest(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_content:1|c\n")
-	log.Printf("Trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
+	log.Printf("Trying to Read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
 	start := time.Now()
 	err := f.limiter.Wait(context.Background())
 	stop := time.Now()
@@ -116,7 +116,7 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.file_info:1|c\n")
 	fInfo, err := f.fclient.localFileInfo(RemotePath(request.Path))
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read local file info for %s", request.Path)
+		log.Debug().Err(err).Msgf("Failed to Read local file info for %s", request.Path)
 		return
 	}
 	err = struc.Pack(conn, fInfo)
@@ -132,17 +132,17 @@ func (f *FileServer) handleDirFInfo(conn net.Conn, request *FsRequest) {
 	root := os.DirFS(path.String())
 	entries, err := fs.ReadDir(root, ".")
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read dir for %s", request.Path)
+		log.Debug().Err(err).Msgf("Failed to Read dir for %s", request.Path)
 		return
 	}
-	fInfos := DirFInfo{FInfos: make([]netFileInfo, 0)}
+	fInfos := DirFInfo{FInfos: make([]netInfo, 0)}
 	for _, e := range entries {
 		fInfo, err := e.Info()
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to read file info for %s", e.Name())
+			log.Debug().Err(err).Msgf("Failed to Read file info for %s", e.Name())
 			continue
 		}
-		fInfos.FInfos = append(fInfos.FInfos, netFileInfo{
+		fInfos.FInfos = append(fInfos.FInfos, netInfo{
 			Name:    fInfo.Name(),
 			Size:    fInfo.Size(),
 			IsDir:   fInfo.IsDir(),
@@ -178,7 +178,7 @@ func (f *FileServer) handleConn(conn net.Conn) {
 	messageType := make([]byte, 1)
 	n, err := conn.Read(messageType)
 	if err != nil || n != 1 {
-		log.Warn().Err(err).Msg("Failed to read message type")
+		log.Warn().Err(err).Msg("Failed to Read message type")
 		return
 	}
 	log.Debug().Msgf("Got message type %d", messageType[0])

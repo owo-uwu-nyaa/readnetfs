@@ -2,38 +2,58 @@ package fileretriever
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/lunixbochs/struc"
 	"github.com/rs/zerolog/log"
+	"golang.org/x/sync/semaphore"
+	"io/fs"
 	"math"
 	"net"
+	"readnetfs/cache"
 	"readnetfs/common"
 	"strings"
+	"sync"
 	"time"
 )
 
 type netClient struct {
-	statsdSocket net.Conn
+	statsdSocket     net.Conn
+	peerNodes        map[string]*PeerInfo
+	plock            sync.Mutex
+	fPathRemoteCache *expirable.LRU[RemotePath, []string]
+	client           *Client
+}
+
+func newNetClient(statsdSocket net.Conn, peerNodes []string, client *Client) *netClient {
+	fPathRemoteCache := expirable.NewLRU[RemotePath, []string](cache.MEM_TOTAL_CACHE_B/cache.MEM_PER_FILE_CACHE_B,
+		func(key RemotePath, value []string) {}, PATH_TTL)
+	pMap := make(map[string]*PeerInfo)
+	for _, peer := range peerNodes {
+		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(MAX_CONCURRENT_REQUESTS))}
+	}
+	return &netClient{statsdSocket: statsdSocket, peerNodes: pMap, fPathRemoteCache: fPathRemoteCache, client: client}
 }
 
 type netReply interface {
-	FileResponse | DirResponse | DirFInfo | netFileInfo
+	FileResponse | DirResponse | DirFInfo | netInfo
 }
 
-func (f *FileClient) getPeer(path RemotePath) (string, error) {
+func (f *netClient) getPeer(path RemotePath) (string, error) {
 	candidates, ok := f.fPathRemoteCache.Get(path)
 	if !ok {
 		candidates = make([]string, 0)
-		var thisFInfo *netFileInfo
+		var thisInfo fs.FileInfo
 		peers := f.peers()
 		for _, peer := range peers {
-			fInfo, err := f.netClient.netFileInfo(path, peer)
+			info, err := f.fileInfo(path, peer)
 			if err == nil {
-				if thisFInfo == nil {
-					thisFInfo = fInfo
+				if thisInfo == nil {
+					thisInfo = info
 				} else {
-					if fInfo.Size != thisFInfo.Size {
+					if info.Size() != thisInfo.Size() {
 						return "", errors.New("file has different sizes on different peers" + string(path))
 					}
 				}
@@ -45,7 +65,7 @@ func (f *FileClient) getPeer(path RemotePath) (string, error) {
 	if len(candidates) == 0 {
 		return "", errors.New("no peer candidates for file" + string(path))
 	}
-	//find candidate with lowest load
+	//find candidate with the lowest load
 	lowest := int64(math.MaxInt64)
 	lowestPeer := ""
 	for _, peer := range candidates {
@@ -59,20 +79,38 @@ func (f *FileClient) getPeer(path RemotePath) (string, error) {
 	if lowest > 3000 {
 		time.Sleep(3 * time.Second)
 	}
-	conn, err := net.Dial("tcp", lowestPeer)
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to get peer conn")
-		return "", err
-	}
-	err = conn.SetDeadline(time.Now().Add(DEADLINE))
-	if err != nil {
-		log.Warn().Msg("Failed to set deadline")
-		return "", err
-	}
 	return lowestPeer, nil
 }
 
+func (f *netClient) peers() []string {
+	f.plock.Lock()
+	peers := make([]string, 0)
+	for peer, _ := range f.peerNodes {
+		peers = append(peers, peer)
+	}
+	defer f.plock.Unlock()
+	return peers
+}
+
+func (f *FileClient) openConn(peer string) (net.Conn, error) {
+	conn, err := net.Dial("tcp", peer)
+	if err != nil {
+		log.Warn().Err(err).Msgf("Failed to connect to %s", peer)
+		return nil, err
+	}
+	conn = common.WrapStatsdConn(conn, f.statsdSocket)
+	return conn, nil
+}
+
 func getReply[T netReply](f *netClient, req FsRequest, peer string) (*T, error) {
+	f.plock.Lock()
+	peerInfo := f.peerNodes[peer]
+	f.plock.Unlock()
+	start := time.Now()
+	err := peerInfo.CurrentRequests.Acquire(context.Background(), 1)
+	defer peerInfo.CurrentRequests.Release(1)
+	stop := time.Now()
+	log.Debug().Msgf("Waited %d millis to dial conn", stop.Sub(start).Milliseconds())
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
@@ -98,9 +136,19 @@ func getReply[T netReply](f *netClient, req FsRequest, peer string) (*T, error) 
 	return &reply, nil
 }
 
-func (f *netClient) netFileInfo(path RemotePath, peer string) (*netFileInfo, error) {
-	var nFileInfo *netFileInfo
-	nFileInfo, err := getReply[netFileInfo](f, FsRequest{
+func (f *netClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
+	peer, err := f.getPeer(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.fileInfo(path, peer)
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.file_info:1|c\n")
+	return info, nil
+}
+
+func (f *netClient) fileInfo(path RemotePath, peer string) (fs.FileInfo, error) {
+	var info *netInfo
+	info, err := getReply[netInfo](f, FsRequest{
 		Type:       byte(FILE_INFO),
 		Offset:     0,
 		Length:     0,
@@ -110,27 +158,19 @@ func (f *netClient) netFileInfo(path RemotePath, peer string) (*netFileInfo, err
 	if err != nil {
 		return nil, err
 	}
-	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.file_info:1|c\n")
-	return nFileInfo, nil
+	return info, nil
 }
 
-func (f *netClient) netRead(path RemotePath, offset int64, length int64) ([]byte, error) {
+func (f *netClient) Read(path RemotePath, offset int64, dest []byte) ([]byte, error) {
 	nextLoad := new(int64)
 	*nextLoad = 3000
-	log.Trace().Msgf("doing net read at %d for len %d", offset, length)
+	log.Trace().Msgf("doing net Read at %d for len %d", offset, len(dest))
 	peer, err := f.getPeer(path)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to get peer")
 		return nil, err
 	}
-	f.plock.Lock()
-	peerInfo := f.peerNodes[peer]
-	f.plock.Unlock()
-	start := time.Now()
-	err = peerInfo.CurrentRequests.Acquire(context.Background(), 1)
-	defer peerInfo.CurrentRequests.Release(1)
-	stop := time.Now()
-	log.Debug().Msgf("Waited %d millis to dial conn", stop.Sub(start).Milliseconds())
+
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to get peer conn")
@@ -156,14 +196,14 @@ func (f *netClient) netRead(path RemotePath, offset int64, length int64) ([]byte
 		return nil, err
 	}
 	defer conn.Close()
-	conn.Write([]byte{READ_CONTENT})
+	conn.Write([]byte{byte(READ_CONTENT)})
 	if err != nil {
 		log.Debug().Err(err).Msg("Failed to write message type")
 		return nil, err
 	}
 	request := &FsRequest{
 		Offset: offset,
-		Length: length,
+		Length: int64(len(dest)),
 		Path:   string(path),
 	}
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.read_content:1|c\n")
@@ -173,7 +213,7 @@ func (f *netClient) netRead(path RemotePath, offset int64, length int64) ([]byte
 		return nil, err
 	}
 	var response FileResponse
-	start = time.Now()
+	start := time.Now()
 	err = struc.Unpack(conn, &response)
 	if err != nil {
 		return nil, err
@@ -190,18 +230,18 @@ func (f *netClient) netReadDirAllPeers(path RemotePath) (map[string][]fuse.DirEn
 	for _, peer := range peers {
 		netEntryList, err := f.netReadDir(path, peer)
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to read remote dir %s from %s", path, peer)
+			log.Debug().Err(err).Msgf("Failed to Read remote dir %s from %s", path, peer)
 			continue
 		}
 		netEntries[peer] = netEntryList
 		//try to cache finfo
-		dirFinfo, err := f.netFileInfoDir(path, peer)
+		dirFinfo, err := f.net(path, peer)
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to acquire associated file infos of path %s from %s", path, peer)
 			continue
 		}
 		for _, fInfo := range dirFinfo.FInfos {
-			fc := new(netFileInfo)
+			fc := new(netInfo)
 			*fc = fInfo
 			f.fInfoCache.Add(path.Append(fInfo.Name), fc)
 			log.Trace().Msg(fInfo.Name + " added to file cache")
@@ -210,22 +250,44 @@ func (f *netClient) netReadDirAllPeers(path RemotePath) (map[string][]fuse.DirEn
 	return netEntries, nil
 }
 
-func (f *netClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, error) {
+func (f *netClient) netReadDir(path RemotePath, peer string) ([]fs.FileInfo, error) {
+	response, err := getReply[DirResponse](f, FsRequest{
+		Type: byte(READDIR_CONTENT),
+		Path: string(path),
+	}, peer)
+	if err != nil {
+		log.Warn().Err(err).Msg("Failed to get peer conn")
+		return nil, err
+	}
+	//TODO consistent stats location
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.readdir_content:1|c\n")
+	dirs := strings.Split(string(response.Dirs), "\x00")
+	if len(dirs) > 0 && dirs[0] == "" {
+		dirs = []string{}
+	}
+	files := strings.Split(string(response.Files), "\x00")
+	if len(files) > 0 && files[0] == "" {
+		files = []string{}
+	}
+	return , nil
+}
+
+func (f *FileClient) netFileInfoDir(path RemotePath, peer string) (*DirFInfo, error) {
 	conn, err := net.Dial("tcp", peer)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to get peer conn")
 		return nil, err
 	}
 	conn = common.WrapStatsdConn(conn, f.statsdSocket)
-	defer conn.Close()
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")
 		return nil, err
 	}
-	write, err := conn.Write([]byte{READDIR_CONTENT})
+	defer conn.Close()
+	write, err := conn.Write([]byte{byte(READ_DIR_FINFO)})
 	if err != nil || write != 1 {
-		log.Warn().Err(err).Msg("Failed to write message type")
+		log.Debug().Err(err).Msg("Failed to write message type")
 		return nil, err
 	}
 	request := &FsRequest{
@@ -233,40 +295,27 @@ func (f *netClient) netReadDir(path RemotePath, peer string) ([]fuse.DirEntry, e
 		Length: 0,
 		Path:   string(path),
 	}
-	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.readdir_content:1|c\n")
+	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.read_dir_finfo:1|c\n")
 	err = struc.Pack(conn, request)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to write request")
+		log.Debug().Err(err).Msg("Failed to pack request")
 		return nil, err
 	}
-	var dirResponse DirResponse
-	err = struc.Unpack(conn, &dirResponse)
-	if err != nil {
-		log.Warn().Err(err).Msg("Failed to unpack response")
-		return nil, err
+	nFinfo := make([]byte, 1)
+	read, err := conn.Read(nFinfo)
+	if err != nil || read != 1 {
+		log.Debug().Err(err).Msgf("Failed to Read num of file infos for dir %s", request.Path)
 	}
-	dirs := strings.Split(string(dirResponse.Dirs), "\x00")
-	if len(dirs) > 0 && dirs[0] == "" {
-		dirs = []string{}
-	}
-	files := strings.Split(string(dirResponse.Files), "\x00")
-	if len(files) > 0 && files[0] == "" {
-		files = []string{}
-	}
-	r := make([]fuse.DirEntry, len(dirs)+len(files))
-	for i, file := range files {
-		r[i] = fuse.DirEntry{
-			Mode: fuse.S_IFREG,
-			Ino:  f.ThisFsToInode(path.Append(file)),
-			Name: file,
+	var dirFInfo DirFInfo
+	dirFInfo.FInfos = make([]netInfo, 0)
+	for i := 0; i < int(nFinfo[0]); i++ {
+		fInfo := new(netInfo)
+		err = struc.Unpack(conn, fInfo)
+		if err != nil {
+			log.Debug().Err(err).Msgf("Failed to write file info for dir %s", request.Path)
+			continue
 		}
+		dirFInfo.FInfos = append(dirFInfo.FInfos, *fInfo)
 	}
-	for i, dir := range dirs {
-		r[i+len(files)] = fuse.DirEntry{
-			Mode: fuse.S_IFDIR,
-			Ino:  f.ThisFsToInode(path.Append(dir)),
-			Name: dir,
-		}
-	}
-	return r, nil
+	return &dirFInfo, nil
 }
