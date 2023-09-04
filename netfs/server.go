@@ -1,4 +1,4 @@
-package fileretriever
+package netfs
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"os"
 	"readnetfs/cache"
 	"readnetfs/common"
+	"readnetfs/netfs"
 	"strings"
 	"time"
 )
@@ -51,10 +52,10 @@ type FileServer struct {
 	srcDir  string
 	bind    string
 	limiter *rate.Limiter
-	fclient *FileClient
+	fclient *netfs.localClient
 }
 
-func NewFileServer(srcDir string, bind string, fclient *FileClient, rateLimit int) *FileServer {
+func NewFileServer(srcDir string, bind string, fclient *netfs.Client, rateLimit int) *FileServer {
 	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(6))) / float64(cache.BLOCKSIZE*8)
 	log.Trace().Msgf("Setting rate limit to %d data packets per second", maxPacketsPerSecond)
 	return &FileServer{srcDir: srcDir, bind: bind, fclient: fclient, limiter: rate.NewLimiter(rate.Limit(maxPacketsPerSecond), 2)}
@@ -98,7 +99,7 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FsRequest) {
 	if err != nil {
 		return
 	}
-	buf, err := f.fclient.localRead(RemotePath(request.Path), request.Offset, request.Length)
+	buf, err := f.fclient.Read(netfs.RemotePath(request.Path), request.Offset, request.Length)
 	if err != nil {
 		return
 	}
@@ -114,7 +115,7 @@ func (f *FileServer) handleFileRequest(conn net.Conn, request *FsRequest) {
 
 func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.file_info:1|c\n")
-	fInfo, err := f.fclient.localFileInfo(RemotePath(request.Path))
+	fInfo, err := f.fclient.FileInfo(netfs.RemotePath(request.Path))
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to Read local file info for %s", request.Path)
 		return
@@ -128,21 +129,21 @@ func (f *FileServer) handleGetFileInfo(conn net.Conn, request *FsRequest) {
 
 func (f *FileServer) handleDirFInfo(conn net.Conn, request *FsRequest) {
 	_, _ = fmt.Fprintf(f.fclient.statsdSocket, "requests.incoming.read_dir_finfo:1|c\n")
-	path := f.fclient.Re2Lo(RemotePath(request.Path))
+	path := f.fclient.Re2Lo(netfs.RemotePath(request.Path))
 	root := os.DirFS(path.String())
 	entries, err := fs.ReadDir(root, ".")
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to Read dir for %s", request.Path)
 		return
 	}
-	fInfos := DirFInfo{FInfos: make([]netInfo, 0)}
+	fInfos := netfs.DirFInfo{FInfos: make([]netfs.netInfo, 0)}
 	for _, e := range entries {
 		fInfo, err := e.Info()
 		if err != nil {
 			log.Debug().Err(err).Msgf("Failed to Read file info for %s", e.Name())
 			continue
 		}
-		fInfos.FInfos = append(fInfos.FInfos, netInfo{
+		fInfos.FInfos = append(fInfos.FInfos, netfs.netInfo{
 			Name:    fInfo.Name(),
 			Size:    fInfo.Size(),
 			IsDir:   fInfo.IsDir(),

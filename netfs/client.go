@@ -61,7 +61,6 @@ type FileClient struct {
 	statsdSocket net.Conn
 	localClient  *localClient
 	netClient    *netClient
-	fcache       *lru.Cache[RemotePath, *cache.CachedFile]
 }
 
 func NewFileClient(localclient *localClient, peerNodes []string, statsdAddrPort string) *FileClient {
@@ -82,16 +81,6 @@ func NewFileClient(localclient *localClient, peerNodes []string, statsdAddrPort 
 
 	return &FileClient{localClient: localclient, peerNodes: pMap, iMap: make(map[RemotePath]uint64), fcache: fcache,
 		fPathRemoteCache: fPathRemoteCache, fInfoCache: fInfoCache, fDirCache: fDirCache, statsdSocket: statsdSocket}
-}
-
-func (f *FileClient) GetCachedFile(path RemotePath) *cache.CachedFile {
-	f.fclock.Lock()
-	defer f.fclock.Unlock()
-	cf, ok := f.fcache.Get(path)
-	if !ok {
-		return nil
-	}
-	return cf
 }
 
 // PutOrGet tries to put a CachedFile, returns existing if already exists
@@ -133,7 +122,7 @@ func (f *FileClient) fileInfo(path RemotePath) (*os.FileInfo, error) {
 	return nil, errors.New("Failed to find finfo" + string(path) + "on any peer")
 }
 
-func (f *FileClient) Read(path RemotePath, off, length int64) ([]byte, error) {
+func (f *FileClient) Read(path RemotePath, off, dest []byte) ([]byte, error) {
 	log.Trace().Msgf("doing Read at %d for len %d", off, length)
 	buf, err := f.localRead(path, off, length)
 	if err != nil {
