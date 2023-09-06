@@ -17,16 +17,16 @@ type cacheBlock struct {
 }
 
 // CachedFile is optimal for contiguous reads
-type cachedFile struct {
+type CachedFile struct {
 	lru                 *lru.Cache[int64, *cacheBlock]
 	dataRequestCallback func(offset, length int64) ([]byte, error)
 	fileSize            int64
 	mu                  sync.Mutex
 }
 
-func newCachedFile(fSize int64, dataRequestCallback func(offset int64, length int64) ([]byte, error)) *cachedFile {
+func NewCachedFile(fSize int64, dataRequestCallback func(offset int64, length int64) ([]byte, error)) *CachedFile {
 	blockLru, _ := lru.New[int64, *cacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
-	cf := &cachedFile{
+	cf := &CachedFile{
 		dataRequestCallback: dataRequestCallback,
 		fileSize:            fSize,
 		lru:                 blockLru,
@@ -34,7 +34,7 @@ func newCachedFile(fSize int64, dataRequestCallback func(offset int64, length in
 	return cf
 }
 
-func (cf *cachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
+func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
 	for i := 0; i < 5; i++ {
 		buf, err := cf.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
 		if err != nil {
@@ -49,7 +49,7 @@ func (cf *cachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
 	return errors.New("Failed to fill block")
 }
 
-func (cf *cachedFile) read(offset int64, dest []byte) ([]byte, error) {
+func (cf *CachedFile) Read(offset int64, dest []byte) ([]byte, error) {
 	if offset > cf.fileSize {
 		return dest[:0], nil
 	}
@@ -79,7 +79,7 @@ func (cf *cachedFile) read(offset int64, dest []byte) ([]byte, error) {
 	return blck.data[blockOffset:], nil
 }
 
-func (cf *cachedFile) readNewData(lrublock int64) {
+func (cf *CachedFile) readNewData(lrublock int64) {
 	if cf.lru.Contains(lrublock) {
 		return
 	}

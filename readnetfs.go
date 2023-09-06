@@ -9,8 +9,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/semaphore"
 	"os"
-	"readnetfs/cache"
-	"readnetfs/fileretriever"
+	"readnetfs/netfs"
 	"strings"
 	"syscall"
 )
@@ -19,9 +18,9 @@ var MAX_CONCURRENCY int64 = 10
 
 type VirtNode struct {
 	fusefs.Inode
-	path fileretriever.RemotePath
+	path netfs.RemotePath
 	sem  *semaphore.Weighted
-	fc   *fileretriever.FileClient
+	fc   *netfs.FileClient
 }
 
 func (n *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -34,27 +33,9 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 	n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
-	cacheEntry := n.fc.GetCachedFile(n.path)
-	if cacheEntry != nil {
-		buf, err := cacheEntry.Read(off, dest)
-		if err != nil {
-			log.Warn().Err(err).Msgf("Failed to read %s", n.path)
-			return nil, syscall.EIO
-		}
-		return fuse.ReadResultData(buf), 0
-	}
-	fInfo, err := n.fc.FileInfo(n.path)
+	buf, err := n.fc.Read(n.path, off, dest)
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read file info for %s", n.path)
-		return nil, syscall.EIO
-	}
-	cf := cache.NewCachedFile(fInfo.Size, func(offset, length int64) ([]byte, error) {
-		return n.fc.Read(n.path, offset, length)
-	})
-	cf = n.fc.PutOrGet(n.path, cf)
-	buf, err := cf.Read(off, dest)
-	if err != nil {
-		log.Warn().Err(err).Msgf("Failed to read %s", n.path)
+		log.Debug().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
 	}
 	return fuse.ReadResultData(buf), 0
@@ -69,12 +50,12 @@ func (n *VirtNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, 
 func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
-	fInfo, err := n.fc.FileInfo(n.path)
+	info, err := n.fc.FileInfo(n.path)
 	if err != nil {
 		return syscall.EIO
 	}
-	out.Size = uint64(fInfo.Size)
-	out.Mtime = uint64(fInfo.ModTime)
+	out.Size = uint64(info.Size())
+	out.Mtime = uint64(info.ModTime().Unix())
 	return 0
 }
 
@@ -89,9 +70,9 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 		return nil, syscall.EIO
 	}
 	stable := fusefs.StableAttr{
-		Ino: n.fc.ThisFsToInode(childpath),
+		Ino: n.fc.PathToInode(childpath),
 	}
-	if fInfo.IsDir {
+	if fInfo.IsDir() {
 		stable.Mode = uint32(fuse.S_IFDIR)
 	} else {
 		stable.Mode = uint32(fuse.S_IFREG)
@@ -109,10 +90,26 @@ func (n *VirtNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno
 	n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	log.Trace().Msgf("Reading dir %s", n.path)
-	entries, err := n.fc.ReadDir(n.path)
+	infos, err := n.fc.ReadDir(n.path)
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read dir %s", n.path)
 		return nil, syscall.EIO
+	}
+	entries := make([]fuse.DirEntry, 0)
+	for _, info := range infos {
+		stable := fusefs.StableAttr{
+			Ino: n.fc.PathToInode(n.path.Append(info.Name())),
+		}
+		if info.IsDir() {
+			stable.Mode = uint32(fuse.S_IFDIR)
+		} else {
+			stable.Mode = uint32(fuse.S_IFREG)
+		}
+		entries = append(entries, fuse.DirEntry{
+			Mode: stable.Mode,
+			Name: info.Name(),
+			Ino:  stable.Ino,
+		})
 	}
 	return fusefs.NewListDirStream(entries), 0
 }
@@ -150,9 +147,11 @@ func main() {
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
-	fclient := fileretriever.NewFileClient(fileretriever.NewLocalclient(*srcDir), PeerNodes, *statsdAddrPort)
+	localClient := netfs.NewLocalclient(*srcDir)
+	netClient := netfs.NewCacheClient(netfs.NewNetClient(*statsdAddrPort, PeerNodes))
+	fclient := netfs.NewFileClient(netfs.Client(localClient), netfs.Client(netClient))
 	if *send {
-		fserver := fileretriever.NewFileServer(*srcDir, *bindAddrPort, fclient, *rateLimit)
+		fserver := netfs.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()
 	}
 	if *receive {

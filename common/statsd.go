@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"net"
 	"strings"
 	"time"
@@ -10,6 +11,22 @@ import (
 type StatsdConn struct {
 	Conn         net.Conn
 	statsdSocket net.Conn
+}
+
+func NewStatsdConn(statsdAddrPort string) net.Conn {
+	statsdSocket := func() net.Conn {
+		if statsdAddrPort != "" {
+			socket, err := net.Dial("udp", statsdAddrPort)
+			if err != nil {
+				log.Warn().Err(err).Msg("Failed to establish statsd connection")
+				return DummyConn{}
+			}
+			return socket
+		} else {
+			return DummyConn{}
+		}
+	}()
+	return statsdSocket
 }
 
 func WrapStatsdConn(conn net.Conn, statsdSocket net.Conn) *StatsdConn {

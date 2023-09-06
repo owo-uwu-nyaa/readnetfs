@@ -1,7 +1,8 @@
-package fileretriever
+package netfs
 
 import (
 	"github.com/rs/zerolog/log"
+	"io/fs"
 	"os"
 )
 
@@ -14,10 +15,16 @@ func NewLocalclient(srcDir string) *localClient {
 }
 
 func (l *localClient) re2lo(remote RemotePath) LocalPath {
+	if len(remote) == 0 {
+		return LocalPath(l.srcDir)
+	}
+	if remote[0] == '/' {
+		remote = remote[1:]
+	}
 	return LocalPath(l.srcDir + "/" + string(remote))
 }
 
-func (l *localClient) read(remotePath RemotePath, off int64, dest []byte) ([]byte, error) {
+func (l *localClient) Read(remotePath RemotePath, off int64, dest []byte) ([]byte, error) {
 	localPath := l.re2lo(remotePath)
 	file, err := os.Open(localPath.String())
 	if err != nil {
@@ -44,7 +51,7 @@ func (l *localClient) read(remotePath RemotePath, off int64, dest []byte) ([]byt
 	return dest[:read], nil
 }
 
-func (l *localClient) readDir(path RemotePath) ([]os.FileInfo, error) {
+func (l *localClient) ReadDir(path RemotePath) ([]os.FileInfo, error) {
 	localPath := l.re2lo(path)
 	log.Trace().Msgf("doing Read dir at %s", path)
 	dir, err := os.ReadDir(localPath.String())
@@ -64,7 +71,7 @@ func (l *localClient) readDir(path RemotePath) ([]os.FileInfo, error) {
 	return r, nil
 }
 
-func (l *localClient) fileInfo(path RemotePath) (os.FileInfo, error) {
+func (l *localClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
 	file, err := os.Open(l.re2lo(path).String())
 	if err != nil {
 		return nil, err
