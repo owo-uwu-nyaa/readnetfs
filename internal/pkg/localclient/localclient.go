@@ -1,4 +1,4 @@
-package netfs
+package localclient
 
 import (
 	"errors"
@@ -6,27 +6,28 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"readnetfs/internal/pkg/fsClient"
 )
 
-type localClient struct {
+type LocalClient struct {
 	srcDir string
 }
 
-func NewLocalclient(srcDir string) *localClient {
-	return &localClient{srcDir: srcDir}
+func NewLocalclient(srcDir string) *LocalClient {
+	return &LocalClient{srcDir: srcDir}
 }
 
-func (l *localClient) re2lo(remote RemotePath) LocalPath {
+func (l *LocalClient) re2lo(remote fsClient.RemotePath) fsClient.LocalPath {
 	if len(remote) == 0 {
-		return LocalPath(l.srcDir)
+		return fsClient.LocalPath(l.srcDir)
 	}
 	if remote[0] == '/' {
 		remote = remote[1:]
 	}
-	return LocalPath(l.srcDir + "/" + string(remote))
+	return fsClient.LocalPath(l.srcDir + "/" + string(remote))
 }
 
-func (l *localClient) Read(remotePath RemotePath, off int64, dest []byte) ([]byte, error) {
+func (l *LocalClient) Read(remotePath fsClient.RemotePath, off int64, dest []byte) ([]byte, error) {
 	localPath := l.re2lo(remotePath)
 	file, err := os.Open(localPath.String())
 	if err != nil {
@@ -58,7 +59,7 @@ func (l *localClient) Read(remotePath RemotePath, off int64, dest []byte) ([]byt
 	return dest, nil
 }
 
-func (l *localClient) ReadDir(path RemotePath) ([]os.FileInfo, error) {
+func (l *LocalClient) ReadDir(path fsClient.RemotePath) ([]os.FileInfo, error) {
 	localPath := l.re2lo(path)
 	log.Trace().Msgf("doing Read dir at %s", path)
 	dir, err := os.ReadDir(localPath.String())
@@ -78,7 +79,7 @@ func (l *localClient) ReadDir(path RemotePath) ([]os.FileInfo, error) {
 	return r, nil
 }
 
-func (l *localClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
+func (l *LocalClient) FileInfo(path fsClient.RemotePath) (fs.FileInfo, error) {
 	file, err := os.Open(l.re2lo(path).String())
 	if err != nil {
 		return nil, err

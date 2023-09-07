@@ -1,14 +1,11 @@
-package netfs
+package fsClient
 
 import (
 	"errors"
 	"github.com/rs/zerolog/log"
 	"io/fs"
 	"sync"
-	"time"
 )
-
-var DEADLINE = 10 * time.Second
 
 type LocalPath string
 
@@ -18,16 +15,6 @@ func (l LocalPath) Append(name string) LocalPath {
 
 func (l LocalPath) String() string {
 	return string(l)
-}
-
-type RemotePath string
-
-func (r RemotePath) Append(name string) RemotePath {
-	return RemotePath(string(r) + "/" + name)
-}
-
-func (r RemotePath) String() string {
-	return string(r)
 }
 
 type Client interface {
@@ -94,4 +81,14 @@ func (f *FileClient) PathToInode(path RemotePath) uint64 {
 	f.iCounter++
 	f.iMap[path] = f.iCounter
 	return f.iCounter
+}
+
+type RemotePath string
+
+func (r RemotePath) Append(name string) RemotePath {
+	return RemotePath(string(r) + "/" + name)
+}
+
+func (r RemotePath) String() string {
+	return string(r)
 }

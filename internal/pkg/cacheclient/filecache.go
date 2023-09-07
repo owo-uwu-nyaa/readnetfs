@@ -1,4 +1,4 @@
-package cache
+package cacheclient
 
 import (
 	"errors"
@@ -41,7 +41,7 @@ func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
 			log.Debug().Msgf("Failed to get full block %d", blockNumber)
 		}
 		if err != nil {
-			log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
+			log.Debug().Err(err).Msg("Failed to acquire new data for the cacheclient")
 			continue
 		}
 		block.data = buf

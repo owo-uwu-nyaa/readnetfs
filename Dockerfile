@@ -10,6 +10,6 @@ RUN go build
 
 FROM docker.io/alpine:3.18
 
-RUN apk add --no-cache fuse
+RUN apk add --no-cacheclient fuse
 
 COPY --from=builder /app/readnetfs /readnetfs

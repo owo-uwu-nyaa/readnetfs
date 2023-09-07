@@ -9,7 +9,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"golang.org/x/sync/semaphore"
 	"os"
-	"readnetfs/netfs"
+	"readnetfs/internal/pkg/cacheclient"
+	"readnetfs/internal/pkg/fsClient"
+	"readnetfs/internal/pkg/localclient"
+	"readnetfs/internal/pkg/netclient"
+	"readnetfs/internal/pkg/server"
 	"strings"
 	"syscall"
 )
@@ -18,9 +22,9 @@ var MAX_CONCURRENCY int64 = 10
 
 type VirtNode struct {
 	fusefs.Inode
-	path netfs.RemotePath
+	path fsClient.RemotePath
 	sem  *semaphore.Weighted
-	fc   *netfs.FileClient
+	fc   *fsClient.FileClient
 }
 
 func (n *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -147,11 +151,11 @@ func main() {
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
-	localClient := netfs.NewLocalclient(*srcDir)
-	netClient := netfs.NewCacheClient(netfs.NewNetClient(*statsdAddrPort, PeerNodes))
-	fclient := netfs.NewFileClient(netfs.Client(localClient), netfs.Client(netClient))
+	localClient := localclient.NewLocalclient(*srcDir)
+	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
+	fclient := fsClient.NewFileClient(fsClient.Client(localClient), fsClient.Client(netClient))
 	if *send {
-		fserver := netfs.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
+		fserver := server.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()
 	}
 	if *receive {

@@ -1,4 +1,4 @@
-package netfs
+package common
 
 import (
 	"encoding/binary"

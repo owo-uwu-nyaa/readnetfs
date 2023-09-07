@@ -1,11 +1,11 @@
-package netfs
+package cacheclient
 
 import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/rs/zerolog/log"
 	"io/fs"
-	"readnetfs/cache"
+	"readnetfs/internal/pkg/fsClient"
 	"sync"
 	"syscall"
 	"time"
@@ -17,25 +17,25 @@ var PATH_TTL = 15 * time.Minute
 
 // CacheClient use mutexes to make sure only one request is sent at a time
 type CacheClient struct {
-	infos          *expirable.LRU[RemotePath, fs.FileInfo]
+	infos          *expirable.LRU[fsClient.RemotePath, fs.FileInfo]
 	infoLock       sync.Mutex
-	dirContent     *expirable.LRU[RemotePath, []string]
+	dirContent     *expirable.LRU[fsClient.RemotePath, []string]
 	dirContentLock sync.Mutex
-	fCache         *lru.Cache[RemotePath, *cache.CachedFile]
+	fCache         *lru.Cache[fsClient.RemotePath, *CachedFile]
 	fCacheLock     sync.Mutex
-	client         Client
+	client         fsClient.Client
 }
 
-func NewCacheClient(client Client) *CacheClient {
-	dirContent := expirable.NewLRU[RemotePath](PATH_CACHE_SIZE,
-		func(key RemotePath, value []string) {}, PATH_TTL)
-	infos := expirable.NewLRU[RemotePath, fs.FileInfo](PATH_CACHE_SIZE,
-		func(key RemotePath, info fs.FileInfo) {}, PATH_TTL)
-	fCache, _ := lru.New[RemotePath, *cache.CachedFile](PATH_CACHE_SIZE)
+func NewCacheClient(client fsClient.Client) *CacheClient {
+	dirContent := expirable.NewLRU[fsClient.RemotePath, []string](PATH_CACHE_SIZE,
+		func(key fsClient.RemotePath, value []string) {}, PATH_TTL)
+	infos := expirable.NewLRU[fsClient.RemotePath, fs.FileInfo](PATH_CACHE_SIZE,
+		func(key fsClient.RemotePath, info fs.FileInfo) {}, PATH_TTL)
+	fCache, _ := lru.New[fsClient.RemotePath, *CachedFile](PATH_CACHE_SIZE)
 	return &CacheClient{client: client, dirContent: dirContent, infos: infos, fCache: fCache}
 }
 
-func (c *CacheClient) PutOrGet(rpath RemotePath, cf *cache.CachedFile) *cache.CachedFile {
+func (c *CacheClient) PutOrGet(rpath fsClient.RemotePath, cf *CachedFile) *CachedFile {
 	c.fCacheLock.Lock()
 	defer c.fCacheLock.Unlock()
 	if existing, ok := c.fCache.Get(rpath); ok {
@@ -45,7 +45,7 @@ func (c *CacheClient) PutOrGet(rpath RemotePath, cf *cache.CachedFile) *cache.Ca
 	return cf
 }
 
-func (c *CacheClient) Read(path RemotePath, off int64, dest []byte) ([]byte, error) {
+func (c *CacheClient) Read(path fsClient.RemotePath, off int64, dest []byte) ([]byte, error) {
 	cacheEntry, ok := c.fCache.Get(path)
 	if ok {
 		dest, err := cacheEntry.Read(off, dest)
@@ -60,7 +60,7 @@ func (c *CacheClient) Read(path RemotePath, off int64, dest []byte) ([]byte, err
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", path)
 		return nil, syscall.EIO
 	}
-	cf := cache.NewCachedFile(info.Size(), func(offset, length int64) ([]byte, error) {
+	cf := NewCachedFile(info.Size(), func(offset, length int64) ([]byte, error) {
 		return c.client.Read(path, offset, make([]byte, length))
 	})
 	cf = c.PutOrGet(path, cf)
@@ -72,7 +72,7 @@ func (c *CacheClient) Read(path RemotePath, off int64, dest []byte) ([]byte, err
 	return buf, nil
 }
 
-func (c *CacheClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
+func (c *CacheClient) ReadDir(path fsClient.RemotePath) ([]fs.FileInfo, error) {
 	if files, ok := c.dirContent.Get(path); ok {
 		infos := make([]fs.FileInfo, len(files))
 		for i, file := range files {
@@ -101,7 +101,7 @@ func (c *CacheClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
 	return infos, nil
 }
 
-func (c *CacheClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
+func (c *CacheClient) FileInfo(path fsClient.RemotePath) (fs.FileInfo, error) {
 	if info, ok := c.infos.Get(path); ok {
 		return info, nil
 	}
