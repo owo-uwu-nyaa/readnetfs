@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/semaphore"
 	"os"
 	"readnetfs/internal/pkg/cacheclient"
-	"readnetfs/internal/pkg/fsClient"
+	"readnetfs/internal/pkg/fsclient"
 	"readnetfs/internal/pkg/localclient"
 	"readnetfs/internal/pkg/netclient"
 	"readnetfs/internal/pkg/server"
@@ -22,9 +22,9 @@ var MAX_CONCURRENCY int64 = 10
 
 type VirtNode struct {
 	fusefs.Inode
-	path fsClient.RemotePath
+	path fsclient.RemotePath
 	sem  *semaphore.Weighted
-	fc   *fsClient.FileClient
+	fc   *fsclient.FileClient
 }
 
 func (n *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -153,7 +153,7 @@ func main() {
 	}
 	localClient := localclient.NewLocalclient(*srcDir)
 	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
-	fclient := fsClient.NewFileClient(fsClient.Client(localClient), fsClient.Client(netClient))
+	fclient := fsclient.NewFileClient(fsclient.Client(localClient), fsclient.Client(netClient))
 	if *send {
 		fserver := server.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()

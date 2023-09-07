@@ -1,4 +1,4 @@
-package fsClient
+package fsclient
 
 import (
 	"errors"

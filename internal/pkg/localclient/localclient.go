@@ -6,7 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"readnetfs/internal/pkg/fsClient"
+	"readnetfs/internal/pkg/fsclient"
 )
 
 type LocalClient struct {
@@ -17,17 +17,17 @@ func NewLocalclient(srcDir string) *LocalClient {
 	return &LocalClient{srcDir: srcDir}
 }
 
-func (l *LocalClient) re2lo(remote fsClient.RemotePath) fsClient.LocalPath {
+func (l *LocalClient) re2lo(remote fsclient.RemotePath) fsclient.LocalPath {
 	if len(remote) == 0 {
-		return fsClient.LocalPath(l.srcDir)
+		return fsclient.LocalPath(l.srcDir)
 	}
 	if remote[0] == '/' {
 		remote = remote[1:]
 	}
-	return fsClient.LocalPath(l.srcDir + "/" + string(remote))
+	return fsclient.LocalPath(l.srcDir + "/" + string(remote))
 }
 
-func (l *LocalClient) Read(remotePath fsClient.RemotePath, off int64, dest []byte) ([]byte, error) {
+func (l *LocalClient) Read(remotePath fsclient.RemotePath, off int64, dest []byte) ([]byte, error) {
 	localPath := l.re2lo(remotePath)
 	file, err := os.Open(localPath.String())
 	if err != nil {
@@ -59,7 +59,7 @@ func (l *LocalClient) Read(remotePath fsClient.RemotePath, off int64, dest []byt
 	return dest, nil
 }
 
-func (l *LocalClient) ReadDir(path fsClient.RemotePath) ([]os.FileInfo, error) {
+func (l *LocalClient) ReadDir(path fsclient.RemotePath) ([]os.FileInfo, error) {
 	localPath := l.re2lo(path)
 	log.Trace().Msgf("doing Read dir at %s", path)
 	dir, err := os.ReadDir(localPath.String())
@@ -79,7 +79,7 @@ func (l *LocalClient) ReadDir(path fsClient.RemotePath) ([]os.FileInfo, error) {
 	return r, nil
 }
 
-func (l *LocalClient) FileInfo(path fsClient.RemotePath) (fs.FileInfo, error) {
+func (l *LocalClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 	file, err := os.Open(l.re2lo(path).String())
 	if err != nil {
 		return nil, err

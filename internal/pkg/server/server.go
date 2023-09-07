@@ -10,7 +10,7 @@ import (
 	"net"
 	"readnetfs/internal/pkg/cacheclient"
 	"readnetfs/internal/pkg/common"
-	"readnetfs/internal/pkg/fsClient"
+	"readnetfs/internal/pkg/fsclient"
 	"readnetfs/internal/pkg/localclient"
 	"readnetfs/internal/pkg/netclient"
 	"time"
@@ -20,7 +20,7 @@ type Server struct {
 	srcDir       string
 	bind         string
 	limiter      *rate.Limiter
-	client       fsClient.Client
+	client       fsclient.Client
 	statsdSocket net.Conn
 }
 
@@ -33,7 +33,7 @@ func NewFileServer(srcDir string, bind string, client *localclient.LocalClient, 
 
 func (f *Server) handleDir(conn net.Conn, request *common.FsRequest) {
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.incoming.readdir_content:1|c\n")
-	infos, err := f.client.ReadDir(fsClient.RemotePath(request.Path))
+	infos, err := f.client.ReadDir(fsclient.RemotePath(request.Path))
 	if err != nil {
 		return
 	}
@@ -58,7 +58,7 @@ func (f *Server) handleRead(conn net.Conn, request *common.FsRequest) {
 	if err != nil {
 		return
 	}
-	buf, err := f.client.Read(fsClient.RemotePath(request.Path), request.Offset, make([]byte, request.Length))
+	buf, err := f.client.Read(fsclient.RemotePath(request.Path), request.Offset, make([]byte, request.Length))
 	if err != nil {
 		return
 	}
@@ -75,7 +75,7 @@ func (f *Server) handleRead(conn net.Conn, request *common.FsRequest) {
 
 func (f *Server) handleInfo(conn net.Conn, request *common.FsRequest) {
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.incoming.file_info:1|c\n")
-	info, err := f.client.FileInfo(fsClient.RemotePath(request.Path))
+	info, err := f.client.FileInfo(fsclient.RemotePath(request.Path))
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to Read local file info for %s", request.Path)
 		return

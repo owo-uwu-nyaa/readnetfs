@@ -13,7 +13,7 @@ import (
 	"net"
 	"readnetfs/internal/pkg/cacheclient"
 	"readnetfs/internal/pkg/common"
-	"readnetfs/internal/pkg/fsClient"
+	"readnetfs/internal/pkg/fsclient"
 	"sync"
 	"time"
 )
@@ -30,12 +30,12 @@ type NetClient struct {
 	statsdSocket     net.Conn
 	peerNodes        map[string]*PeerInfo
 	plock            sync.Mutex
-	fPathRemoteCache *expirable.LRU[fsClient.RemotePath, []string]
+	fPathRemoteCache *expirable.LRU[fsclient.RemotePath, []string]
 }
 
 func NewNetClient(statsdAddrPort string, peerNodes []string) *NetClient {
-	fPathRemoteCache := expirable.NewLRU[fsClient.RemotePath, []string](cacheclient.MEM_TOTAL_CACHE_B/cacheclient.MEM_PER_FILE_CACHE_B,
-		func(key fsClient.RemotePath, value []string) {}, cacheclient.PATH_TTL)
+	fPathRemoteCache := expirable.NewLRU[fsclient.RemotePath, []string](cacheclient.MEM_TOTAL_CACHE_B/cacheclient.MEM_PER_FILE_CACHE_B,
+		func(key fsclient.RemotePath, value []string) {}, cacheclient.PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
 		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(cacheclient.MAX_CONCURRENT_REQUESTS))}
@@ -48,7 +48,7 @@ type netReply interface {
 	common.FileResponse | common.DirInfo | common.NetInfo
 }
 
-func (f *NetClient) getPeer(path fsClient.RemotePath) (string, error) {
+func (f *NetClient) getPeer(path fsclient.RemotePath) (string, error) {
 	candidates, ok := f.fPathRemoteCache.Get(path)
 	if !ok {
 		candidates = make([]string, 0)
@@ -154,7 +154,7 @@ func getReply[T netReply](f *NetClient, req *common.FsRequest, peer string) (*T,
 	return &reply, nil
 }
 
-func (f *NetClient) FileInfo(path fsClient.RemotePath) (fs.FileInfo, error) {
+func (f *NetClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 	for _, peer := range f.peers() {
 		info, err := f.fileInfo(path, peer)
 		if err == nil {
@@ -165,7 +165,7 @@ func (f *NetClient) FileInfo(path fsClient.RemotePath) (fs.FileInfo, error) {
 	return nil, errors.New("no peer has file" + string(path))
 }
 
-func (f *NetClient) fileInfo(path fsClient.RemotePath, peer string) (fs.FileInfo, error) {
+func (f *NetClient) fileInfo(path fsclient.RemotePath, peer string) (fs.FileInfo, error) {
 	var info *common.NetInfo
 	info, err := getReply[common.NetInfo](f, &common.FsRequest{
 		Type:       byte(common.FILE_INFO),
@@ -192,7 +192,7 @@ func (f *NetClient) calcDelay(nextLoad int64, peer string) {
 	log.Trace().Msgf("Peer %s load is now %d", peer, info.Load)
 }
 
-func (f *NetClient) Read(path fsClient.RemotePath, offset int64, dest []byte) ([]byte, error) {
+func (f *NetClient) Read(path fsclient.RemotePath, offset int64, dest []byte) ([]byte, error) {
 	peer, err := f.getPeer(path)
 	if err != nil {
 		return nil, err
@@ -230,7 +230,7 @@ func deduplicate(ls map[string][]fs.FileInfo) []fs.FileInfo {
 	return r
 }
 
-func (f *NetClient) ReadDir(path fsClient.RemotePath) ([]fs.FileInfo, error) {
+func (f *NetClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 	netEntries := make(map[string][]fs.FileInfo)
 	peers := f.peers()
 	for _, peer := range peers {
@@ -249,7 +249,7 @@ func (f *NetClient) ReadDir(path fsClient.RemotePath) ([]fs.FileInfo, error) {
 	return deduplicate(netEntries), nil
 }
 
-func (f *NetClient) readDir1(path fsClient.RemotePath, peer string) ([]fs.FileInfo, error) {
+func (f *NetClient) readDir1(path fsclient.RemotePath, peer string) ([]fs.FileInfo, error) {
 	response, err := getReply[common.DirInfo](f, &common.FsRequest{
 		Type: byte(common.READDIR_INFO),
 		Path: string(path),
