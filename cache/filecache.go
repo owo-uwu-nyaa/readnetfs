@@ -37,6 +37,9 @@ func NewCachedFile(fSize int64, dataRequestCallback func(offset int64, length in
 func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
 	for i := 0; i < 5; i++ {
 		buf, err := cf.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
+		if len(buf) < BLOCKSIZE {
+			log.Debug().Msgf("Failed to get full block %d", blockNumber)
+		}
 		if err != nil {
 			log.Debug().Err(err).Msg("Failed to acquire new data for the cache")
 			continue
@@ -76,7 +79,18 @@ func (cf *CachedFile) Read(offset int64, dest []byte) ([]byte, error) {
 	for i := int64(0); i < 3; i++ {
 		go cf.readNewData(lruBlock + i)
 	}
-	return blck.data[blockOffset:], nil
+	end := blockOffset + int64(len(dest))
+	if end > int64(len(blck.data)) {
+		end = int64(len(blck.data))
+	}
+	ret := blck.data[blockOffset:end]
+	if len(ret) < len(dest) && offset+int64(len(ret)) < cf.fileSize {
+		nb, err := cf.Read((lruBlock+1)*(BLOCKSIZE), dest[len(ret):])
+		if err == nil {
+			ret = append(ret, nb...)
+		}
+	}
+	return ret, nil
 }
 
 func (cf *CachedFile) readNewData(lrublock int64) {

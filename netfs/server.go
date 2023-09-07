@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-type MessageType byte
-
 type Server struct {
 	srcDir       string
 	bind         string
@@ -64,6 +62,7 @@ func (f *Server) handleRead(conn net.Conn, request *FsRequest) {
 	fileResponse := FileResponse{
 		Content: buf,
 	}
+	log.Debug().Msgf("Read %d bytes from file %s", len(buf), request.Path)
 	err = struc.Pack(conn, &fileResponse)
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to write response")
@@ -94,8 +93,8 @@ func (f *Server) handleConn(conn net.Conn) {
 		return
 	}
 	request := &FsRequest{}
-	log.Debug().Msgf("Got message type %d", request.Type)
 	err = struc.Unpack(conn, request)
+	log.Debug().Msgf("Got message type %d", request.Type)
 	switch MessageType(request.Type) {
 	case FILE_INFO:
 		f.handleInfo(conn, request)

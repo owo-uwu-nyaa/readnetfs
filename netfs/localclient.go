@@ -1,7 +1,9 @@
 package netfs
 
 import (
+	"errors"
 	"github.com/rs/zerolog/log"
+	"io"
 	"io/fs"
 	"os"
 )
@@ -31,24 +33,29 @@ func (l *localClient) Read(remotePath RemotePath, off int64, dest []byte) ([]byt
 		log.Debug().Err(err).Msgf("Failed to open file %s", localPath)
 		return nil, err
 	}
-	finfo, err := file.Stat()
+	info, err := file.Stat()
 	if err != nil {
 		log.Warn().Err(err).Msgf("Failed to stat file %s", localPath)
 		return nil, err
 	}
-	if off >= finfo.Size() {
+	if off >= info.Size() {
 		return []byte{}, nil
 	}
-	seek, err := file.Seek(off, 0)
-	if err != nil || seek != off {
-		log.Warn().Err(err).Msgf("Failed to seek to %d in file %s", off, localPath)
-		return nil, err
+	if off+int64(len(dest)) > info.Size() {
+		dest = dest[:info.Size()-off]
 	}
-	read, err := file.Read(dest)
+	seek, err := file.Seek(off, io.SeekStart)
+	if err != nil || seek != off {
+		return nil, errors.Join(err, errors.New("Failed to seek to correct offset"))
+	}
+	read, err := io.ReadAtLeast(file, dest, len(dest))
 	if err != nil {
 		return nil, err
 	}
-	return dest[:read], nil
+	if read != len(dest) {
+		log.Debug().Err(err).Msgf("Failed to read enough bytes from %s", localPath)
+	}
+	return dest, nil
 }
 
 func (l *localClient) ReadDir(path RemotePath) ([]os.FileInfo, error) {

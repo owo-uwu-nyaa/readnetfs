@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+type MessageType byte
+
 const (
 	FILE_INFO MessageType = iota
 	READ_CONTENT

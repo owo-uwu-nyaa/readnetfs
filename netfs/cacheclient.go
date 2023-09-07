@@ -13,7 +13,7 @@ import (
 
 var MAX_CONCURRENT_REQUESTS = 2
 var PATH_CACHE_SIZE = 5000
-var PATH_TTL = 1 * time.Second
+var PATH_TTL = 15 * time.Minute
 
 // CacheClient use mutexes to make sure only one request is sent at a time
 type CacheClient struct {
@@ -55,13 +55,13 @@ func (c *CacheClient) Read(path RemotePath, off int64, dest []byte) ([]byte, err
 		}
 		return dest, nil
 	}
-	info, err := c.client.FileInfo(path)
+	info, err := c.FileInfo(path)
 	if err != nil {
 		log.Debug().Err(err).Msgf("Failed to read file info for %s", path)
 		return nil, syscall.EIO
 	}
 	cf := cache.NewCachedFile(info.Size(), func(offset, length int64) ([]byte, error) {
-		return c.client.Read(path, offset, dest)
+		return c.client.Read(path, offset, make([]byte, length))
 	})
 	cf = c.PutOrGet(path, cf)
 	buf, err := cf.Read(off, dest)
@@ -75,15 +75,16 @@ func (c *CacheClient) Read(path RemotePath, off int64, dest []byte) ([]byte, err
 func (c *CacheClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
 	if files, ok := c.dirContent.Get(path); ok {
 		infos := make([]fs.FileInfo, len(files))
-		for _, file := range files {
-			info, err := c.FileInfo(path.Append(file))
-			if err != nil {
-				log.Warn().Err(err).Msgf("Failed to read file info for %s", path)
-				return nil, syscall.EIO
+		for i, file := range files {
+			info, ok := c.infos.Get(path.Append(file))
+			if !ok {
+				break
 			}
-			infos = append(infos, info)
+			infos[i] = info
 		}
-		return infos, nil
+		if len(infos) == len(files) {
+			return infos, nil
+		}
 	}
 	c.dirContentLock.Lock()
 	defer c.dirContentLock.Unlock()

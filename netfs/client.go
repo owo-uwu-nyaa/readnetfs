@@ -51,7 +51,7 @@ func NewFileClient(clients ...Client) *FileClient {
 func (f *FileClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
 	for _, client := range f.clients {
 		info, err := client.FileInfo(path)
-		if err != nil {
+		if err != nil || info == nil {
 			log.Debug().Err(err).Msgf("Failed to get fInfo from %s", path)
 			continue
 		}
