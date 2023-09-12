@@ -26,7 +26,7 @@ type Server struct {
 
 func NewFileServer(srcDir string, bind string, client *localclient.LocalClient, rateLimit int, statsdAddrPort string) *Server {
 	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(6))) / float64(cacheclient.BLOCKSIZE*8)
-	log.Trace().Msgf("Setting rate limit to %d data packets per second", maxPacketsPerSecond)
+	log.Trace().Msgf("setting rate limit to %d data packets per second", maxPacketsPerSecond)
 	statsdSocket := common.NewStatsdConn(statsdAddrPort)
 	return &Server{srcDir: srcDir, bind: bind, client: client, limiter: rate.NewLimiter(rate.Limit(maxPacketsPerSecond), 2), statsdSocket: statsdSocket}
 }
@@ -43,14 +43,14 @@ func (f *Server) handleDir(conn net.Conn, request *common.FsRequest) {
 		return
 	}
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to write response")
+		log.Warn().Err(err).Msg("failed to write response")
 		return
 	}
 }
 
 func (f *Server) handleRead(conn net.Conn, request *common.FsRequest) {
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.incoming.read_content:1|c\n")
-	log.Printf("Trying to Read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
+	log.Printf("trying to read %d bytes at %d from file %s", request.Length, request.Offset, request.Path)
 	start := time.Now()
 	err := f.limiter.Wait(context.Background())
 	stop := time.Now()
@@ -65,10 +65,10 @@ func (f *Server) handleRead(conn net.Conn, request *common.FsRequest) {
 	fileResponse := common.FileResponse{
 		Content: buf,
 	}
-	log.Debug().Msgf("Read %d bytes from file %s", len(buf), request.Path)
+	log.Debug().Msgf("read %d bytes from file %s", len(buf), request.Path)
 	err = struc.Pack(conn, &fileResponse)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to write response")
+		log.Warn().Err(err).Msg("failed to write response")
 		return
 	}
 }
@@ -77,12 +77,12 @@ func (f *Server) handleInfo(conn net.Conn, request *common.FsRequest) {
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.incoming.file_info:1|c\n")
 	info, err := f.client.FileInfo(fsclient.RemotePath(request.Path))
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to Read local file info for %s", request.Path)
+		log.Debug().Err(err).Msgf("failed to Read local file info for %s", request.Path)
 		return
 	}
 	err = struc.Pack(conn, common.NewNetInfo(info))
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to write file info for %s", request.Path)
+		log.Debug().Err(err).Msgf("failed to write file info for %s", request.Path)
 		return
 	}
 }
@@ -92,12 +92,12 @@ func (f *Server) handleConn(conn net.Conn) {
 	defer conn.Close()
 	err := conn.SetDeadline(time.Now().Add(netclient.DEADLINE))
 	if err != nil {
-		log.Warn().Msg("Failed to set deadline")
+		log.Warn().Msg("failed to set deadline")
 		return
 	}
 	request := &common.FsRequest{}
 	err = struc.Unpack(conn, request)
-	log.Debug().Msgf("Got message type %d", request.Type)
+	log.Debug().Msgf("got message type %d", request.Type)
 	switch common.MessageType(request.Type) {
 	case common.FILE_INFO:
 		f.handleInfo(conn, request)
@@ -116,7 +116,7 @@ func (f *Server) Serve() {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Info().Err(err).Msg("Failed to accept")
+			log.Info().Err(err).Msg("failed to accept")
 			continue
 		}
 		go f.handleConn(conn)

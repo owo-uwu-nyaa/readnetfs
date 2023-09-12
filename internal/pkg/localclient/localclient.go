@@ -2,10 +2,12 @@ package localclient
 
 import (
 	"errors"
+	"fmt"
 	"github.com/rs/zerolog/log"
 	"io"
 	"io/fs"
 	"os"
+	"readnetfs/internal/pkg/common"
 	"readnetfs/internal/pkg/fsclient"
 )
 
@@ -17,26 +19,26 @@ func NewLocalclient(srcDir string) *LocalClient {
 	return &LocalClient{srcDir: srcDir}
 }
 
-func (l *LocalClient) re2lo(remote fsclient.RemotePath) fsclient.LocalPath {
+func (l *LocalClient) re2lo(remote fsclient.RemotePath) common.LocalPath {
 	if len(remote) == 0 {
-		return fsclient.LocalPath(l.srcDir)
+		return common.LocalPath(l.srcDir)
 	}
 	if remote[0] == '/' {
 		remote = remote[1:]
 	}
-	return fsclient.LocalPath(l.srcDir + "/" + string(remote))
+	return common.LocalPath(fmt.Sprintf("%s/%s", l.srcDir, string(remote)))
 }
 
 func (l *LocalClient) Read(remotePath fsclient.RemotePath, off int64, dest []byte) ([]byte, error) {
 	localPath := l.re2lo(remotePath)
 	file, err := os.Open(localPath.String())
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to open file %s", localPath)
+		log.Debug().Err(err).Msgf("failed to open file %s", localPath)
 		return nil, err
 	}
 	info, err := file.Stat()
 	if err != nil {
-		log.Warn().Err(err).Msgf("Failed to stat file %s", localPath)
+		log.Warn().Err(err).Msgf("failed to stat file %s", localPath)
 		return nil, err
 	}
 	if off >= info.Size() {
@@ -47,31 +49,31 @@ func (l *LocalClient) Read(remotePath fsclient.RemotePath, off int64, dest []byt
 	}
 	seek, err := file.Seek(off, io.SeekStart)
 	if err != nil || seek != off {
-		return nil, errors.Join(err, errors.New("Failed to seek to correct offset"))
+		return nil, errors.Join(err, errors.New("failed to seek to correct offset"))
 	}
 	read, err := io.ReadAtLeast(file, dest, len(dest))
 	if err != nil {
 		return nil, err
 	}
 	if read != len(dest) {
-		log.Debug().Err(err).Msgf("Failed to read enough bytes from %s", localPath)
+		log.Debug().Err(err).Msgf("failed to read enough bytes from %s", localPath)
 	}
 	return dest, nil
 }
 
 func (l *LocalClient) ReadDir(path fsclient.RemotePath) ([]os.FileInfo, error) {
 	localPath := l.re2lo(path)
-	log.Trace().Msgf("doing Read dir at %s", path)
+	log.Trace().Msgf("read dir at %s", path)
 	dir, err := os.ReadDir(localPath.String())
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to Read dir %s", path)
+		log.Debug().Err(err).Msgf("failed to Read dir %s", path)
 		return nil, err
 	}
 	r := make([]os.FileInfo, len(dir))
 	for i, file := range dir {
 		info, err := file.Info()
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to acquire file info for %s", path.Append(file.Name()))
+			log.Debug().Err(err).Msgf("failed to acquire file info for %s", path.Append(file.Name()))
 			continue
 		}
 		r[i] = info

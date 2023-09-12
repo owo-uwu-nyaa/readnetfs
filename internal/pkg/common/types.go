@@ -131,3 +131,13 @@ func (d *DirInfo) Unmarshal(reader io.Reader) error {
 	}
 	return nil
 }
+
+type LocalPath string
+
+func (l LocalPath) Append(name string) LocalPath {
+	return LocalPath(string(l) + "/" + name)
+}
+
+func (l LocalPath) String() string {
+	return string(l)
+}

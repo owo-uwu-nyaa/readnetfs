@@ -55,14 +55,10 @@ func (c *CacheClient) Read(path fsclient.RemotePath, off int64, dest []byte) ([]
 		}
 		return dest, nil
 	}
-	info, err := c.FileInfo(path)
+	cf, err := NewCachedFile(path, c.client)
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read file info for %s", path)
-		return nil, syscall.EIO
+		return nil, err
 	}
-	cf := NewCachedFile(info.Size(), func(offset, length int64) ([]byte, error) {
-		return c.client.Read(path, offset, make([]byte, length))
-	})
 	cf = c.PutOrGet(path, cf)
 	buf, err := cf.Read(off, dest)
 	if err != nil {

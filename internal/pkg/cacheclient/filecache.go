@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/hashicorp/golang-lru/v2"
 	"github.com/rs/zerolog/log"
+	"readnetfs/internal/pkg/fsclient"
 	"sync"
 )
 
@@ -18,38 +19,39 @@ type cacheBlock struct {
 
 // CachedFile is optimal for contiguous reads
 type CachedFile struct {
-	lru                 *lru.Cache[int64, *cacheBlock]
-	dataRequestCallback func(offset, length int64) ([]byte, error)
-	fileSize            int64
-	mu                  sync.Mutex
+	lru      *lru.Cache[int64, *cacheBlock]
+	fileSize int64
+	mu       sync.Mutex
+	client   fsclient.Client
+	path     fsclient.RemotePath
 }
 
-func NewCachedFile(fSize int64, dataRequestCallback func(offset int64, length int64) ([]byte, error)) *CachedFile {
+func NewCachedFile(path fsclient.RemotePath, client fsclient.Client) (*CachedFile, error) {
 	blockLru, _ := lru.New[int64, *cacheBlock](MEM_PER_FILE_CACHE_B / BLOCKSIZE)
-	cf := &CachedFile{
-		dataRequestCallback: dataRequestCallback,
-		fileSize:            fSize,
-		lru:                 blockLru,
+	info, err := client.FileInfo(path)
+	if err != nil {
+		log.Debug().Err(err).Msgf("Failed to read file info for %s", path)
+		return nil, err
 	}
-	return cf
+	cf := &CachedFile{
+		client:   client,
+		path:     path,
+		fileSize: info.Size(),
+		lru:      blockLru,
+	}
+	return cf, nil
 }
 
 func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
-	for i := 0; i < 5; i++ {
-		buf, err := cf.dataRequestCallback(blockNumber*BLOCKSIZE, BLOCKSIZE)
-		if len(buf) < BLOCKSIZE {
-			log.Debug().Msgf("Failed to get full block %d", blockNumber)
-		}
-		if err != nil {
-			log.Debug().Err(err).Msg("Failed to acquire new data for the cacheclient")
-			continue
-		}
-		block.data = buf
-		return nil
+	buf, err := cf.client.Read(cf.path, blockNumber*BLOCKSIZE, make([]byte, 0))
+	if err != nil {
+		log.Warn().Msgf("killing block %d for file %s", blockNumber, cf.path)
+		cf.lru.Remove(blockNumber)
+		return errors.New("failed to fill block")
 	}
-	log.Warn().Msg("Killing Block")
-	cf.lru.Remove(blockNumber)
-	return errors.New("Failed to fill block")
+	block.data = buf
+	return nil
+
 }
 
 func (cf *CachedFile) Read(offset int64, dest []byte) ([]byte, error) {

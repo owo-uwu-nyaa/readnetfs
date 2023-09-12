@@ -7,16 +7,6 @@ import (
 	"sync"
 )
 
-type LocalPath string
-
-func (l LocalPath) Append(name string) LocalPath {
-	return LocalPath(string(l) + "/" + name)
-}
-
-func (l LocalPath) String() string {
-	return string(l)
-}
-
 type Client interface {
 	Read(path RemotePath, offset int64, dest []byte) ([]byte, error)
 	ReadDir(path RemotePath) ([]fs.FileInfo, error)
@@ -39,24 +29,24 @@ func (f *FileClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
 	for _, client := range f.clients {
 		info, err := client.FileInfo(path)
 		if err != nil || info == nil {
-			log.Debug().Err(err).Msgf("Failed to get fInfo from %s", path)
+			log.Debug().Err(err).Msgf("failed to get fInfo from %s", path)
 			continue
 		}
 		return info, nil
 	}
-	return nil, errors.New("Failed to get fInfo from any client")
+	return nil, errors.New("failed to get fInfo from any client")
 }
 
 func (f *FileClient) Read(path RemotePath, off int64, dest []byte) ([]byte, error) {
 	for _, client := range f.clients {
 		buf, err := client.Read(path, off, dest)
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to read from %s", path)
+			log.Debug().Err(err).Msgf("failed to read from %s", path)
 			continue
 		}
 		return buf, nil
 	}
-	return nil, errors.New("Failed to read from any client")
+	return nil, errors.New("failed to read from any client")
 }
 
 func (f *FileClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
@@ -64,7 +54,7 @@ func (f *FileClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
 	for _, client := range f.clients {
 		newEntries, err := client.ReadDir(path)
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to read dir from %s", path)
+			log.Debug().Err(err).Msg("failed to read dir")
 			continue
 		}
 		entries = append(entries, newEntries...)

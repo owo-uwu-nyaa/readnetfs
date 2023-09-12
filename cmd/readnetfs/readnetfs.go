@@ -7,6 +7,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/rs/zerolog/pkgerrors"
 	"golang.org/x/sync/semaphore"
 	"os"
 	"readnetfs/internal/pkg/cacheclient"
@@ -133,6 +134,8 @@ func (i *PeerAddress) Set(value string) error {
 
 func main() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	log.Debug().Msg(strings.Join(os.Args, ","))
 	bindAddrPort := flag.String("bind", "", "Bind address and port in x.x.x.x:port format")
 	mntDir := flag.String("mnt", "", "Directory to mount the net filesystem on")
@@ -153,7 +156,7 @@ func main() {
 	}
 	localClient := localclient.NewLocalclient(*srcDir)
 	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
-	fclient := fsclient.NewFileClient(fsclient.Client(localClient), fsclient.Client(netClient))
+	client := fsclient.NewFileClient(fsclient.Client(localClient), fsclient.Client(netClient))
 	if *send {
 		fserver := server.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()
@@ -165,7 +168,7 @@ func main() {
 				Inode: fusefs.Inode{},
 				sem:   semaphore.NewWeighted(MAX_CONCURRENCY),
 				path:  "",
-				fc:    fclient,
+				fc:    client,
 			}
 			server, err := fusefs.Mount(*mntDir, root, &fusefs.Options{
 				MountOptions: fuse.MountOptions{

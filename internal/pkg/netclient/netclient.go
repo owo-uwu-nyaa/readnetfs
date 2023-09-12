@@ -193,13 +193,27 @@ func (f *NetClient) calcDelay(nextLoad int64, peer string) {
 }
 
 func (f *NetClient) Read(path fsclient.RemotePath, offset int64, dest []byte) ([]byte, error) {
+	var err error
+	var buf []byte
+	for i := 0; i < 3; i++ {
+		buf, err = f.read(path, offset, dest)
+		if err == nil {
+			return buf, nil
+		} else {
+			log.Debug().Err(err).Msgf("failed to netread %s", path)
+		}
+	}
+	return nil, err
+}
+
+func (f *NetClient) read(path fsclient.RemotePath, offset int64, dest []byte) ([]byte, error) {
 	peer, err := f.getPeer(path)
 	if err != nil {
 		return nil, err
 	}
 	log.Trace().Msgf("doing netread at %d for len %d", offset, len(dest))
 	if err != nil {
-		log.Debug().Err(err).Msg("Failed to get peer")
+		log.Debug().Err(err).Msg("failed to get peer")
 		return nil, err
 	}
 	response, err := getReply[common.FileResponse](f, &common.FsRequest{
@@ -236,7 +250,7 @@ func (f *NetClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 	for _, peer := range peers {
 		netEntryList, err := f.readDir1(path, peer)
 		if err != nil {
-			log.Debug().Err(err).Msgf("Failed to Read remote dir %s from %s", path, peer)
+			log.Debug().Err(err).Msgf("failed to Read remote dir %s from %s", path, peer)
 			continue
 		}
 		netEntries[peer] = netEntryList
@@ -255,7 +269,7 @@ func (f *NetClient) readDir1(path fsclient.RemotePath, peer string) ([]fs.FileIn
 		Path: string(path),
 	}, peer)
 	if err != nil {
-		log.Warn().Err(err).Msg("Failed to get peer conn")
+		log.Warn().Err(err).Msg("failed to get peer conn")
 		return nil, err
 	}
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.readdir_content:1|c\n")
