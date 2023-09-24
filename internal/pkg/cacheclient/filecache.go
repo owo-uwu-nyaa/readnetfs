@@ -43,7 +43,7 @@ func NewCachedFile(path fsclient.RemotePath, client fsclient.Client) (*CachedFil
 }
 
 func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
-	buf, err := cf.client.Read(cf.path, blockNumber*BLOCKSIZE, make([]byte, 0))
+	buf, err := cf.client.Read(cf.path, blockNumber*BLOCKSIZE, make([]byte, BLOCKSIZE))
 	if err != nil {
 		log.Warn().Msgf("killing block %d for file %s", blockNumber, cf.path)
 		cf.lru.Remove(blockNumber)
