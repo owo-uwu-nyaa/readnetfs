@@ -166,7 +166,7 @@ func main() {
 		go func() {
 			err := os.Mkdir(*mntDir, 0755)
 			if err != nil {
-				log.Fatal().Err(err).Msg("Failed to create mount directory")
+				log.Warn().Err(err).Msg("Failed to create mount directory")
 			}
 			root := &VirtNode{
 				Inode: fusefs.Inode{},
