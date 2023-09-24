@@ -86,7 +86,12 @@ func (l *LocalClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Warn().Err(err).Msgf("failed to close file %s", path)
+		}
+	}(file)
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err

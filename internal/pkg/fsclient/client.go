@@ -20,7 +20,7 @@ type FileClient struct {
 	iLock    sync.Mutex
 }
 
-// Order of clients is priority
+// NewFileClient with argument clients: order of clients is priority
 func NewFileClient(clients ...Client) *FileClient {
 	return &FileClient{clients: clients, iMap: make(map[RemotePath]uint64)}
 }

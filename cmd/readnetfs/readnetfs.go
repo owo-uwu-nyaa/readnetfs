@@ -11,10 +11,11 @@ import (
 	"golang.org/x/sync/semaphore"
 	"os"
 	"readnetfs/internal/pkg/cacheclient"
+	"readnetfs/internal/pkg/failcache"
+	"readnetfs/internal/pkg/fileserver"
 	"readnetfs/internal/pkg/fsclient"
 	"readnetfs/internal/pkg/localclient"
 	"readnetfs/internal/pkg/netclient"
-	"readnetfs/internal/pkg/server"
 	"strings"
 	"syscall"
 )
@@ -29,13 +30,13 @@ type VirtNode struct {
 }
 
 func (n *VirtNode) Open(ctx context.Context, openFlags uint32) (fh fusefs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	return nil, 0, 0
 }
 
 func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	buf, err := n.fc.Read(n.path, off, dest)
@@ -47,13 +48,13 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 }
 
 func (n *VirtNode) Write(ctx context.Context, fh fusefs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	return 0, 0
 }
 
 func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	info, err := n.fc.FileInfo(n.path)
 	if err != nil {
@@ -65,17 +66,17 @@ func (n *VirtNode) Getattr(ctx context.Context, fh fusefs.FileHandle, out *fuse.
 }
 
 func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fusefs.Inode, syscall.Errno) {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	log.Debug().Msgf("Looking up %s in %s", name, n.path)
-	childpath := n.path.Append(name)
-	fInfo, err := n.fc.FileInfo(childpath)
+	childPath := n.path.Append(name)
+	fInfo, err := n.fc.FileInfo(childPath)
 	if err != nil {
-		log.Debug().Err(err).Msgf("Failed to read file info for %s", childpath)
+		log.Debug().Err(err).Msgf("Failed to read file info for %s", childPath)
 		return nil, syscall.EIO
 	}
 	stable := fusefs.StableAttr{
-		Ino: n.fc.PathToInode(childpath),
+		Ino: n.fc.PathToInode(childPath),
 	}
 	if fInfo.IsDir() {
 		stable.Mode = uint32(fuse.S_IFDIR)
@@ -84,7 +85,7 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 	}
 	cNode := &VirtNode{
 		sem:  semaphore.NewWeighted(MAX_CONCURRENCY),
-		path: childpath,
+		path: childPath,
 		fc:   n.fc,
 	}
 	child := n.NewInode(ctx, cNode, stable)
@@ -92,7 +93,7 @@ func (n *VirtNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 }
 
 func (n *VirtNode) Readdir(ctx context.Context) (fusefs.DirStream, syscall.Errno) {
-	n.sem.Acquire(ctx, 1)
+	_ = n.sem.Acquire(ctx, 1)
 	defer n.sem.Release(1)
 	log.Trace().Msgf("Reading dir %s", n.path)
 	infos, err := n.fc.ReadDir(n.path)
@@ -143,9 +144,9 @@ func main() {
 	flag.Var(&PeerNodes, "peer", "Peer addresses and ports in x.x.x.x:port format, has to specified for each peer like so: -peer x.x.x.x:port -peer x.x.x.x:port ...")
 	send := flag.Bool("send", false, "Serve files from the src directory")
 	receive := flag.Bool("receive", false, "Receive files and mount the net filesystem on the mnt directory")
-	rateLimit := flag.Int("rate", 1000, "rate limit in Mbit/s")
-	allowOther := flag.Bool("allow-other", true, "allow other users to access the mount")
-	statsdAddrPort := flag.String("statsd", "", "Statsd server address and port in x.x.x.x:port format")
+	rateLimit := flag.Int("rate", 1000, "Rate limit in Mbit/s")
+	allowOther := flag.Bool("allow-other", true, "Allow other users to access the mount")
+	statsdAddrPort := flag.String("statsd", "", "Statsd fileserver address and port in x.x.x.x:port format")
 	flag.Parse()
 
 	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
@@ -154,16 +155,19 @@ func main() {
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
-	localClient := localclient.NewLocalclient(*srcDir)
+	localClient := failcache.NewFailCache(localclient.NewLocalclient(*srcDir))
 	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
 	client := fsclient.NewFileClient(fsclient.Client(localClient), fsclient.Client(netClient))
 	if *send {
-		fserver := server.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
+		fserver := fileserver.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()
 	}
 	if *receive {
 		go func() {
-			os.Mkdir(*mntDir, 0755)
+			err := os.Mkdir(*mntDir, 0755)
+			if err != nil {
+				log.Fatal().Err(err).Msg("Failed to create mount directory")
+			}
 			root := &VirtNode{
 				Inode: fusefs.Inode{},
 				sem:   semaphore.NewWeighted(MAX_CONCURRENCY),

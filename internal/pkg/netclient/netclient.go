@@ -94,7 +94,7 @@ func (f *NetClient) getPeer(path fsclient.RemotePath) (string, error) {
 func (f *NetClient) peers() []string {
 	f.plock.Lock()
 	peers := make([]string, 0)
-	for peer, _ := range f.peerNodes {
+	for peer := range f.peerNodes {
 		peers = append(peers, peer)
 	}
 	defer f.plock.Unlock()
@@ -129,7 +129,12 @@ func getReply[T netReply](f *NetClient, req *common.FsRequest, peer string) (*T,
 		return nil, err
 	}
 	conn = common.WrapStatsdConn(conn, f.statsdSocket)
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to close conn")
+		}
+	}(conn)
 	err = conn.SetDeadline(time.Now().Add(DEADLINE))
 	if err != nil {
 		log.Warn().Err(err).Msg("Failed to set deadline")

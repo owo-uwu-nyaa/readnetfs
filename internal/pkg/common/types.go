@@ -83,22 +83,6 @@ type DirInfo struct {
 	Infos []fs.FileInfo
 }
 
-type sliceRW struct {
-	buf []byte
-}
-
-func (s sliceRW) Write(p []byte) (n int, err error) {
-	copy(s.buf, p)
-	s.buf = s.buf[len(p):]
-	return len(p), nil
-}
-
-func (s sliceRW) Read(p []byte) (n int, err error) {
-	copy(p, s.buf)
-	s.buf = s.buf[len(p):]
-	return len(p), nil
-}
-
 func (d *DirInfo) Marshal(writer io.Writer) error {
 	err := binary.Write(writer, binary.LittleEndian, int32(len(d.Infos)))
 	if err != nil {

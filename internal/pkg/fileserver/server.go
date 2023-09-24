@@ -1,4 +1,4 @@
-package server
+package fileserver
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"readnetfs/internal/pkg/cacheclient"
 	"readnetfs/internal/pkg/common"
 	"readnetfs/internal/pkg/fsclient"
-	"readnetfs/internal/pkg/localclient"
 	"readnetfs/internal/pkg/netclient"
 	"time"
 )
@@ -24,7 +23,7 @@ type Server struct {
 	statsdSocket net.Conn
 }
 
-func NewFileServer(srcDir string, bind string, client *localclient.LocalClient, rateLimit int, statsdAddrPort string) *Server {
+func NewFileServer(srcDir string, bind string, client fsclient.Client, rateLimit int, statsdAddrPort string) *Server {
 	maxPacketsPerSecond := (float64(rateLimit) * math.Pow(float64(10), float64(6))) / float64(cacheclient.BLOCKSIZE*8)
 	log.Trace().Msgf("setting rate limit to %d data packets per second", maxPacketsPerSecond)
 	statsdSocket := common.NewStatsdConn(statsdAddrPort)
@@ -89,7 +88,12 @@ func (f *Server) handleInfo(conn net.Conn, request *common.FsRequest) {
 
 func (f *Server) handleConn(conn net.Conn) {
 	conn = common.WrapStatsdConn(conn, f.statsdSocket)
-	defer conn.Close()
+	defer func(conn net.Conn) {
+		err := conn.Close()
+		if err != nil {
+			log.Warn().Err(err).Msgf("Failed to close statsd conn")
+		}
+	}(conn)
 	err := conn.SetDeadline(time.Now().Add(netclient.DEADLINE))
 	if err != nil {
 		log.Warn().Msg("failed to set deadline")
