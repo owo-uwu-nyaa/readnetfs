@@ -134,7 +134,7 @@ func (i *PeerAddress) Set(value string) error {
 }
 
 func main() {
-	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	log.Debug().Msg(strings.Join(os.Args, ","))
@@ -149,15 +149,15 @@ func main() {
 	statsdAddrPort := flag.String("statsd", "", "Statsd fileserver address and port in x.x.x.x:port format")
 	flag.Parse()
 
-	log.Debug().Msg("peers: " + strings.Join(PeerNodes, ", "))
-	log.Debug().Msg("bind: " + *bindAddrPort)
+	log.Info().Msg("peers: " + strings.Join(PeerNodes, ", "))
+	log.Info().Msg("bind: " + *bindAddrPort)
 
 	if !*send && !*receive {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
 	localClient := failcache.NewFailCache(localclient.NewLocalclient(*srcDir))
 	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
-	client := fsclient.NewFileClient(fsclient.Client(localClient), fsclient.Client(netClient))
+	client := fsclient.NewFileClient(localClient, netClient)
 	if *send {
 		fserver := fileserver.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
 		go fserver.Serve()
