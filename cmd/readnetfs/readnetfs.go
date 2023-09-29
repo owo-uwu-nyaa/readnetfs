@@ -40,7 +40,7 @@ func (n *VirtNode) Read(ctx context.Context, fh fusefs.FileHandle, dest []byte, 
 	defer n.sem.Release(1)
 	log.Trace().Msgf("Reading at %d from %s", off, n.path)
 	buf, err := n.fc.Read(n.path, off, dest)
-	if err != nil {
+	if err != nil || buf == nil {
 		log.Debug().Err(err).Msgf("Failed to read %s", n.path)
 		return nil, syscall.EIO
 	}

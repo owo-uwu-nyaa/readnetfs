@@ -42,6 +42,11 @@ func NewCachedFile(path fsclient.RemotePath, client fsclient.Client) (*CachedFil
 	return cf, nil
 }
 
+func (cf *CachedFile) Flush() {
+	cf.lru.Purge()
+	cf.client.Purge()
+}
+
 func (cf *CachedFile) fillLruBlock(blockNumber int64, block *cacheBlock) error {
 	buf, err := cf.client.Read(cf.path, blockNumber*BLOCKSIZE, make([]byte, BLOCKSIZE))
 	if err != nil {

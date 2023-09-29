@@ -22,7 +22,12 @@ func NewFailCache(client fsclient.Client) *FailCache {
 	return &FailCache{failedPaths: fPaths, client: client}
 }
 
-func (f FailCache) Read(path fsclient.RemotePath, offset int64, dest []byte) ([]byte, error) {
+func (f *FailCache) Purge() {
+	f.failedPaths.Purge()
+	f.client.Purge()
+}
+
+func (f *FailCache) Read(path fsclient.RemotePath, offset int64, dest []byte) ([]byte, error) {
 	if _, ok := f.failedPaths.Get(path); ok {
 		return nil, fs.ErrNotExist
 	}
@@ -33,7 +38,7 @@ func (f FailCache) Read(path fsclient.RemotePath, offset int64, dest []byte) ([]
 	return buf, err
 }
 
-func (f FailCache) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
+func (f *FailCache) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 	if _, ok := f.failedPaths.Get(path); ok {
 		return nil, fs.ErrNotExist
 	}

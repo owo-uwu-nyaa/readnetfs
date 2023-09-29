@@ -33,6 +33,15 @@ type NetClient struct {
 	fPathRemoteCache *expirable.LRU[fsclient.RemotePath, []string]
 }
 
+func (f *NetClient) Purge() {
+	f.fPathRemoteCache.Purge()
+	pMap := make(map[string]*PeerInfo)
+	for peer, _ := range f.peerNodes {
+		pMap[peer] = &PeerInfo{CurrentRequests: semaphore.NewWeighted(int64(cacheclient.MAX_CONCURRENT_REQUESTS))}
+	}
+	f.peerNodes = pMap
+}
+
 func NewNetClient(statsdAddrPort string, peerNodes []string) *NetClient {
 	fPathRemoteCache := expirable.NewLRU[fsclient.RemotePath, []string](cacheclient.MEM_TOTAL_CACHE_B/cacheclient.MEM_PER_FILE_CACHE_B,
 		func(key fsclient.RemotePath, value []string) {}, cacheclient.PATH_TTL)

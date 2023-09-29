@@ -15,6 +15,8 @@ type LocalClient struct {
 	srcDir string
 }
 
+func (l *LocalClient) Purge() {}
+
 func NewLocalclient(srcDir string) *LocalClient {
 	return &LocalClient{srcDir: srcDir}
 }

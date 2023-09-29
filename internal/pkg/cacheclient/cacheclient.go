@@ -35,6 +35,13 @@ func NewCacheClient(client fsclient.Client) *CacheClient {
 	return &CacheClient{client: client, dirContent: dirContent, infos: infos, fCache: fCache}
 }
 
+func (c *CacheClient) Purge() {
+	c.dirContent.Purge()
+	c.infos.Purge()
+	c.fCache.Purge()
+	c.client.Purge()
+}
+
 func (c *CacheClient) PutOrGet(rpath fsclient.RemotePath, cf *CachedFile) *CachedFile {
 	c.fCacheLock.Lock()
 	defer c.fCacheLock.Unlock()
