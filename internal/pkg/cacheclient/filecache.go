@@ -8,8 +8,8 @@ import (
 	"sync"
 )
 
-const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 100MB
-const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 1 //1GB
+const MEM_PER_FILE_CACHE_B = 1024 * 1024 * 100   // 300MB
+const MEM_TOTAL_CACHE_B = 1024 * 1024 * 1024 * 3 //3GB
 const BLOCKSIZE = 1024 * 1024 * 1                //1MB and a few
 
 type cacheBlock struct {

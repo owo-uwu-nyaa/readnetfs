@@ -31,7 +31,7 @@ func NewCacheClient(client fsclient.Client) *CacheClient {
 		func(key fsclient.RemotePath, value []string) {}, PATH_TTL)
 	infos := expirable.NewLRU[fsclient.RemotePath, fs.FileInfo](PATH_CACHE_SIZE,
 		func(key fsclient.RemotePath, info fs.FileInfo) {}, PATH_TTL)
-	fCache, _ := lru.New[fsclient.RemotePath, *CachedFile](PATH_CACHE_SIZE)
+	fCache, _ := lru.New[fsclient.RemotePath, *CachedFile](MEM_TOTAL_CACHE_B / MEM_PER_FILE_CACHE_B)
 	return &CacheClient{client: client, dirContent: dirContent, infos: infos, fCache: fCache}
 }
 
