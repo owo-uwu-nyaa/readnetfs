@@ -2,6 +2,7 @@ package fsclient
 
 import (
 	"errors"
+	"fmt"
 	"github.com/rs/zerolog/log"
 	"io/fs"
 	"sync"
@@ -35,15 +36,15 @@ func (f *FileClient) Purge() {
 
 func (f *FileClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
 	for i := 0; i < MAX_RETRIES; i++ {
-		if i == MAX_RETRIES-1 {
-			log.Warn().Msgf("Something bad happened, purging caches")
-			f.Purge()
-		}
 		for _, client := range f.clients {
+			log.Trace().Msgf("reading file info %s from %T", path, client)
 			info, err := client.FileInfo(path)
 			if err != nil || info == nil {
 				log.Debug().Err(err).Msgf("failed to get fInfo from %s", path)
 				continue
+			}
+			if info == nil {
+				return nil, errors.New(fmt.Sprintf("nil fileinfo returned from client %T", client))
 			}
 			return info, nil
 		}
@@ -53,11 +54,8 @@ func (f *FileClient) FileInfo(path RemotePath) (fs.FileInfo, error) {
 
 func (f *FileClient) Read(path RemotePath, off int64, dest []byte) ([]byte, error) {
 	for i := 0; i < MAX_RETRIES; i++ {
-		if i == MAX_RETRIES-1 {
-			log.Warn().Msgf("Something bad happened, purging caches")
-			f.Purge()
-		}
 		for _, client := range f.clients {
+			log.Trace().Msgf("reading %s from %T", path, client)
 			buf, err := client.Read(path, off, dest)
 			if err != nil {
 				log.Debug().Err(err).Msgf("failed to read from %s", path)
@@ -75,10 +73,7 @@ func (f *FileClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
 		var newEntries []fs.FileInfo
 		var err error
 		for i := 0; i < MAX_RETRIES; i++ {
-			if i == MAX_RETRIES-1 {
-				log.Warn().Msgf("Something bad happened, purging caches")
-				f.Purge()
-			}
+			log.Trace().Msgf("reading dir %s from %T", path, client)
 			newEntries, err = client.ReadDir(path)
 			if err != nil || newEntries == nil {
 				log.Debug().Err(err).Msg("failed to read dir")
@@ -88,7 +83,13 @@ func (f *FileClient) ReadDir(path RemotePath) ([]fs.FileInfo, error) {
 		}
 		entries = append(entries, newEntries...)
 	}
-	return entries, nil
+	notNil := make([]fs.FileInfo, 0)
+	for _, entry := range entries {
+		if entry != nil {
+			notNil = append(notNil, entry)
+		}
+	}
+	return notNil, nil
 }
 
 func (f *FileClient) PathToInode(path RemotePath) uint64 {
