@@ -1,4 +1,3 @@
-# do not use alpine here, as it is "[...] highly experimental, and not officially supported by the Go project (see golang/go#19938 for details)."
 FROM docker.io/golang:latest AS builder
 
 WORKDIR /app
@@ -9,8 +8,13 @@ RUN go mod download
 COPY . ./
 RUN go build ./cmd/readnetfs
 
-FROM docker.io/alpine:latest
+FROM docker.io/library/debian:latest
 
-RUN apk add --no-cache fuse
+RUN apt update \
+ && apt install -y fuse \
+ && apt clean \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /var/log/apt/* \
+ && rm -rf /var/log/dpkg.log
 
 COPY --from=builder /app/readnetfs /readnetfs
