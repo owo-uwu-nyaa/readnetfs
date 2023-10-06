@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"math"
 	"net"
+	"path/filepath"
 	"readnetfs/internal/pkg/cacheclient"
 	"readnetfs/internal/pkg/common"
 	"readnetfs/internal/pkg/fsclient"
@@ -43,7 +44,7 @@ func (f *NetClient) Purge() {
 }
 
 func NewNetClient(statsdAddrPort string, peerNodes []string) *NetClient {
-	fPathRemoteCache := expirable.NewLRU[fsclient.RemotePath, []string](cacheclient.MEM_TOTAL_CACHE_B/cacheclient.MEM_PER_FILE_CACHE_B,
+	fPathRemoteCache := expirable.NewLRU[fsclient.RemotePath, []string](cacheclient.PATH_CACHE_SIZE,
 		func(key fsclient.RemotePath, value []string) {}, cacheclient.PATH_TTL)
 	pMap := make(map[string]*PeerInfo)
 	for _, peer := range peerNodes {
@@ -175,6 +176,8 @@ func (f *NetClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 			return info, nil
 		}
 	}
+	//trigger parent dir read to fill cache for future requests
+	go f.ReadDir(fsclient.RemotePath(filepath.Dir(string(path))))
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.file_info:1|c\n")
 	return nil, errors.New("no peer has file" + string(path))
 }
