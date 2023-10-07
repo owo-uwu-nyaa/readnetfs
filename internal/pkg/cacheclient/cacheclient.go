@@ -5,6 +5,7 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/rs/zerolog/log"
 	"io/fs"
+	"path/filepath"
 	"readnetfs/internal/pkg/fsclient"
 	"sync"
 	"syscall"
@@ -105,9 +106,12 @@ func (c *CacheClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 }
 
 func (c *CacheClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
+	//trigger parent dir read to fill cache for future requests
+	go c.ReadDir(fsclient.RemotePath(filepath.Dir(string(path))))
 	if info, ok := c.infos.Get(path); ok {
 		return info, nil
 	}
+	log.Warn().Msgf("reading single file info from %s", path)
 	c.infoLock.Lock()
 	defer c.infoLock.Unlock()
 	info, err := c.client.FileInfo(path)

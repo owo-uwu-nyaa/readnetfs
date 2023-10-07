@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"math"
 	"net"
-	"path/filepath"
 	"readnetfs/internal/pkg/cacheclient"
 	"readnetfs/internal/pkg/common"
 	"readnetfs/internal/pkg/fsclient"
@@ -176,8 +175,6 @@ func (f *NetClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 			return info, nil
 		}
 	}
-	//trigger parent dir read to fill cache for future requests
-	go f.ReadDir(fsclient.RemotePath(filepath.Dir(string(path))))
 	_, _ = fmt.Fprintf(f.statsdSocket, "requests.outgoing.file_info:1|c\n")
 	return nil, errors.New("no peer has file" + string(path))
 }
