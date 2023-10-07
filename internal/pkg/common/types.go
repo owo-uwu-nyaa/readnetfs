@@ -123,5 +123,9 @@ func (l LocalPath) Append(name string) LocalPath {
 }
 
 func (l LocalPath) String() string {
-	return string(l)
+	str := string(l)
+	if str[:len(str)-1] == "/" {
+		return str[:len(str)-1]
+	}
+	return str
 }

@@ -110,5 +110,9 @@ func (r RemotePath) Append(name string) RemotePath {
 }
 
 func (r RemotePath) String() string {
-	return string(r)
+	str := string(r)
+	if str[:len(str)-1] == "/" {
+		return str[:len(str)-1]
+	}
+	return str
 }
