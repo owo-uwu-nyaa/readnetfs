@@ -5,6 +5,7 @@ import (
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/rs/zerolog/log"
 	"io/fs"
+	"path/filepath"
 	"readnetfs/internal/pkg/fsclient"
 	"sync"
 	"syscall"
@@ -109,7 +110,7 @@ func (c *CacheClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 	func() {
 		c.dirContentLock.Lock()
 		defer c.dirContentLock.Unlock()
-		infos, err := c.client.ReadDir(path)
+		infos, err := c.client.ReadDir(fsclient.RemotePath(filepath.Dir(string(path))))
 		if err != nil {
 			return
 		}
