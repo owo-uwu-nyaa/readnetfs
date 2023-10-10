@@ -18,6 +18,7 @@ var PATH_TTL = 15 * time.Minute
 // CacheClient use mutexes to make sure only one request is sent at a time
 type CacheClient struct {
 	infos          *expirable.LRU[fsclient.RemotePath, fs.FileInfo]
+	failed         *expirable.LRU[fsclient.RemotePath, error]
 	infoLock       sync.Mutex
 	dirContent     *expirable.LRU[fsclient.RemotePath, []string]
 	dirContentLock sync.Mutex
@@ -31,8 +32,9 @@ func NewCacheClient(client fsclient.Client) *CacheClient {
 		func(key fsclient.RemotePath, value []string) {}, PATH_TTL)
 	infos := expirable.NewLRU[fsclient.RemotePath, fs.FileInfo](PATH_CACHE_SIZE,
 		func(key fsclient.RemotePath, info fs.FileInfo) {}, PATH_TTL)
+	failedPaths := expirable.NewLRU[fsclient.RemotePath, error](PATH_CACHE_SIZE, func(key fsclient.RemotePath, value error) {}, PATH_TTL)
 	fCache, _ := lru.New[fsclient.RemotePath, *CachedFile](MEM_TOTAL_CACHE_B / MEM_PER_FILE_CACHE_B)
-	return &CacheClient{client: client, dirContent: dirContent, infos: infos, fCache: fCache}
+	return &CacheClient{client: client, dirContent: dirContent, infos: infos, fCache: fCache, failed: failedPaths}
 }
 
 func (c *CacheClient) Purge() {
@@ -53,6 +55,9 @@ func (c *CacheClient) PutOrGet(rpath fsclient.RemotePath, cf *CachedFile) *Cache
 }
 
 func (c *CacheClient) Read(path fsclient.RemotePath, off int64, dest []byte) ([]byte, error) {
+	if reason, ok := c.failed.Get(path); ok {
+		return nil, reason
+	}
 	cacheEntry, ok := c.fCache.Get(path)
 	if ok {
 		dest, err := cacheEntry.Read(off, dest)
@@ -76,6 +81,9 @@ func (c *CacheClient) Read(path fsclient.RemotePath, off int64, dest []byte) ([]
 }
 
 func (c *CacheClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
+	if reason, ok := c.failed.Get(path); ok {
+		return nil, reason
+	}
 	if files, ok := c.dirContent.Get(path); ok {
 		infos := make([]fs.FileInfo, len(files))
 		for i, file := range files {
@@ -93,6 +101,7 @@ func (c *CacheClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 	defer c.dirContentLock.Unlock()
 	infos, err := c.client.ReadDir(path)
 	if err != nil {
+		c.failed.Add(path, err)
 		return nil, err
 	}
 	files := make([]string, len(infos))
@@ -105,6 +114,9 @@ func (c *CacheClient) ReadDir(path fsclient.RemotePath) ([]fs.FileInfo, error) {
 }
 
 func (c *CacheClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
+	if reason, ok := c.failed.Get(path); ok {
+		return nil, reason
+	}
 	if info, ok := c.infos.Get(path); ok {
 		return info, nil
 	}
@@ -113,6 +125,7 @@ func (c *CacheClient) FileInfo(path fsclient.RemotePath) (fs.FileInfo, error) {
 	defer c.infoLock.Unlock()
 	info, err := c.client.FileInfo(path)
 	if err != nil {
+		c.failed.Add(path, err)
 		return nil, err
 	}
 	c.infos.Add(path, info)

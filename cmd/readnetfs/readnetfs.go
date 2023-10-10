@@ -16,6 +16,7 @@ import (
 	"readnetfs/internal/pkg/fsclient"
 	"readnetfs/internal/pkg/localclient"
 	"readnetfs/internal/pkg/netclient"
+	"readnetfs/internal/pkg/sanitycheck"
 	"strings"
 	"syscall"
 )
@@ -156,7 +157,7 @@ func main() {
 		log.Fatal().Msg("Must specify either send or receive or both")
 	}
 	localClient := failcache.NewFailCache(localclient.NewLocalclient(*srcDir))
-	netClient := cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes))
+	netClient := sanitycheck.NewSanityCheck(cacheclient.NewCacheClient(netclient.NewNetClient(*statsdAddrPort, PeerNodes)))
 	client := fsclient.NewFileClient(localClient, netClient)
 	if *send {
 		fserver := fileserver.NewFileServer(*srcDir, *bindAddrPort, localClient, *rateLimit, *statsdAddrPort)
